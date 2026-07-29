@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Swami Dayanandha Educational Institutions — official emblem (vector
+       recreation): lotus over an open book against the rising sun, with the
+       Gita verse "न हि ज्ञानेन सदृशं पवित्रम्" and the institution motto. -->
+  <defs>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"    stop-color="#F2AE1C"/>
+      <stop offset="0.45" stop-color="#F8D96B"/>
+      <stop offset="0.8"  stop-color="#FDF3CE"/>
+      <stop offset="1"    stop-color="#FFFDF4"/>
+    </linearGradient>
+    <!-- Lotus petal drawn upward from its base at the origin -->
+    <path id="petal" d="M0 0 C -20 -24, -16 -62, 0 -84 C 16 -62, 20 -24, 0 0 Z"
+          fill="#FFF9E8" stroke="#A02424" stroke-width="6.5" stroke-linejoin="round"/>
+  </defs>
+
+  <!-- Background tile (white, like the original artwork) -->
+  <rect width="512" height="512" fill="#FFFFFF"/>
+
+  <!-- Rising sun -->
+  <circle cx="256" cy="212" r="168" fill="url(#sun)"/>
+
+  <!-- Lotus -->
+  <g>
+    <use xlink:href="#petal" transform="translate(256 254)"/>
+    <use xlink:href="#petal" transform="translate(256 254) rotate(-30) scale(0.9)"/>
+    <use xlink:href="#petal" transform="translate(256 254) rotate(30) scale(0.9)"/>
+    <use xlink:href="#petal" transform="translate(256 254) rotate(-58) scale(0.74)"/>
+    <use xlink:href="#petal" transform="translate(256 254) rotate(58) scale(0.74)"/>
+    <use xlink:href="#petal" transform="translate(256 254) rotate(-84) scale(0.55)"/>
+    <use xlink:href="#petal" transform="translate(256 254) rotate(84) scale(0.55)"/>
+  </g>
+
+  <!-- Looped stem / garland with fan flower resting on the book -->
+  <ellipse cx="256" cy="308" rx="58" ry="24" fill="#FFFDF5" stroke="#A02424" stroke-width="7"/>
+  <g stroke="#A02424" stroke-width="4" stroke-linecap="round" fill="none">
+    <line x1="256" y1="326" x2="256" y2="296"/>
+    <line x1="256" y1="326" x2="238" y2="299"/>
+    <line x1="256" y1="326" x2="274" y2="299"/>
+    <line x1="256" y1="326" x2="224" y2="305"/>
+    <line x1="256" y1="326" x2="288" y2="305"/>
+  </g>
+
+  <!-- Open book -->
+  <g fill="#FFFDF8" stroke="#A02424" stroke-width="7" stroke-linejoin="round">
+    <path d="M256 306 C 210 280, 148 268, 94 276 L 94 296 C 148 288, 210 300, 256 328 Z"/>
+    <path d="M256 306 C 302 280, 364 268, 418 276 L 418 296 C 364 288, 302 300, 256 328 Z"/>
+  </g>
+  <g fill="none" stroke="#A02424" stroke-width="4" stroke-linecap="round">
+    <path d="M256 338 C 210 310, 148 298, 96 306"/>
+    <path d="M256 338 C 302 310, 364 298, 416 306"/>
+    <path d="M256 348 C 212 321, 152 309, 100 316"/>
+    <path d="M256 348 C 300 321, 360 309, 412 316"/>
+    <path d="M256 358 C 214 332, 156 320, 106 326"/>
+    <path d="M256 358 C 298 332, 356 320, 406 326"/>
+  </g>
+
+  <!-- Gita verse along the book edges -->
+  <g fill="#A02424" font-family="'Noto Sans Devanagari','Nirmala UI','Mangal',sans-serif"
+     font-weight="700" font-size="31" text-anchor="middle">
+    <text x="163" y="386" transform="rotate(11 163 386)">न हि ज्ञानेन</text>
+    <text x="349" y="386" transform="rotate(-11 349 386)">सदृशं पवित्रम्</text>
+  </g>
+
+  <!-- Motto -->
+  <text x="256" y="478" text-anchor="middle" fill="#A02424"
+        font-family="Arial, Helvetica, sans-serif" font-weight="bold" font-size="30">Knowledge the greatest wealth</text>
+</svg>

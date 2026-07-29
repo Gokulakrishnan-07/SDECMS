@@ -1,0 +1,16 @@
+<?php
+
+/**
+ * Local database overrides. Copy to config/database.php and adjust.
+ */
+
+return [
+    'host'     => '127.0.0.1',
+    'port'     => 3306,
+    'database' => 'secms',
+    'username' => 'root',
+    'password' => '',
+    // Set when the app is NOT served with public/ as the document root,
+    // e.g. 'base_url' => '/SDC/public'
+    'base_url' => '',
+];
