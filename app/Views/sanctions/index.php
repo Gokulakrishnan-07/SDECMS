@@ -1,7 +1,18 @@
 <?php use App\Core\Auth; ?>
+ <?php
+$isDepartmentHead = Auth::role() === 'department_head';
+
+$sanctionLabel = $isDepartmentHead
+    ? 'Sanction Raising'
+    : 'Sanction Requisition';
+
+$newSanctionLabel = $isDepartmentHead
+    ? 'New Sanction Raising'
+    : 'New Sanction Requisition';
+    ?>
 <div class="page-head">
     <div>
-        <h1 class="page-title">Sanction Requisition</h1>
+        <h1 class="page-title"><?= $sanctionLabel ?></h1>
         <span class="page-sub">Auto-numbered sanctions per department (e.g. COL-2026-001)</span>
     </div>
     <div class="d-flex gap-2 flex-wrap">
@@ -17,7 +28,7 @@
         </div>
         <?php if (Auth::can('sanctions.create')): ?>
         <button class="btn btn-primary btn-sm" id="btnNew">
-            <i class="fa-solid fa-plus me-1"></i> New Sanction Requisition
+            <i class="fa-solid fa-plus me-1"></i> <?= $newSanctionLabel ?>
         </button>
         <?php endif; ?>
     </div>
@@ -54,7 +65,7 @@
     <div class="modal-dialog modal-form">
         <form class="modal-content" id="sanctionForm">
             <div class="modal-header">
-                <h5 class="modal-title" id="sanctionModalTitle">New Sanction Requisition</h5>
+                <h5 class="modal-title" id="sanctionModalTitle"><?= $newSanctionLabel ?></h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -230,7 +241,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('btnNew')?.addEventListener('click', () => {
         editing = null;
-        document.getElementById('sanctionModalTitle').textContent = 'New Sanction Requisition';
+        document.getElementById('sanctionModalTitle').textContent = <?= json_encode($newSanctionLabel) ?>;
         document.getElementById('grpDept').style.display = '';
         document.getElementById('budgetPanel').style.display = '';
         document.getElementById('sanctionForm').reset();

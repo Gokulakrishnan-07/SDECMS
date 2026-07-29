@@ -1,8 +1,11 @@
 <?php use App\Core\Auth; ?>
 <div class="page-head">
     <div>
-        <h1 class="page-title">Purchase Requisitions</h1>
-        <span class="page-sub">Raised under an approved sanction · auto subdivision codes (A–Z, a–z)</span>
+       <h1 class="page-title">
+     <?= Auth::role() === 'department_head'
+    ? 'Purchase Raising'
+    : 'Purchase Requisitions' ?></h1>
+        <span class="page-sub">Raised under an approved sanction · Auto sequential numbering (01, 02, 03...)</span>
     </div>
     <div class="d-flex gap-2 flex-wrap">
         <div class="btn-group">
@@ -16,9 +19,12 @@
             </ul>
         </div>
         <?php if (Auth::can('purchase_requests.create')): ?>
-        <button class="btn btn-primary btn-sm" id="btnNew">
-            <i class="fa-solid fa-plus me-1"></i> New Requisition
-        </button>
+      <button class="btn btn-primary btn-sm" id="btnNew">
+         <i class="fa-solid fa-plus me-1"></i>
+         <?= Auth::role() === 'department_head'
+        ? 'New Purchase Raising'
+        : 'New Requisition' ?>
+</button>
         <?php endif; ?>
     </div>
 </div>
@@ -54,7 +60,10 @@
     <div class="modal-dialog modal-form">
         <form class="modal-content" id="prForm" enctype="multipart/form-data">
             <div class="modal-header">
-                <h5 class="modal-title" id="prModalTitle">New Purchase Requisition</h5>
+              <h5 class="modal-title" id="prModalTitle">
+                    <?= Auth::role() === 'department_head'
+                      ? 'New Purchase Raising'
+                      : 'New Purchase Requisition' ?></h5>  
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
@@ -310,7 +319,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     document.getElementById('btnNew')?.addEventListener('click', async () => {
         editing = null;
-        document.getElementById('prModalTitle').textContent = 'New Purchase Requisition';
+        document.getElementById('prModalTitle').textContent =
+         <?= json_encode(
+             Auth::role() === 'department_head'
+               ? 'New Purchase Raising'
+               : 'New Purchase Requisition') ?>;
         document.getElementById('grpSanction').style.display = '';
         document.getElementById('prForm').reset();
         document.getElementById('grpUnit').style.display = 'none';

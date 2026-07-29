@@ -7,8 +7,11 @@ $currentPath = Request::path();
 $menu = [
     ['label' => 'Dashboard',                 'path' => '/dashboard',         'icon' => 'fa-house',            'perm' => 'dashboard.view'],
     ['label' => 'Budget Allocation',         'path' => '/budgets',           'icon' => 'fa-sack-dollar',      'perm' => 'budgets.view'],
-    ['label' => 'Sanction Requisition',      'path' => '/sanctions',         'icon' => 'fa-stamp',            'perm' => 'sanctions.view'],
-    ['label' => 'Purchase Requisition',      'path' => '/purchase-requests', 'icon' => 'fa-file-signature',   'perm' => 'purchase_requests.view'],
+   [ 'label' => Auth::role() === 'department_head'? 'Sanction Raising': 'Sanction Requisition','path'  => '/sanctions','icon'  => 'fa-stamp','perm'  => 'sanctions.view',],
+    [
+    'label' => Auth::role() === 'department_head'
+        ? 'Purchase Raising'
+        : 'Purchase Requisition','path' => '/purchase-requests','icon' => 'fa-file-signature','perm' => 'purchase_requests.view',],
     ['label' => 'Purchase Order',            'path' => '/purchase-orders',   'icon' => 'fa-file-invoice',     'perm' => 'purchase_orders.view'],
     ['label' => 'Reports',                   'path' => '/reports',           'icon' => 'fa-chart-pie',        'perm' => 'reports.view'],
     ['label' => 'Financial Year Management', 'path' => '/financial-years',   'icon' => 'fa-calendar-days',    'perm' => 'financial_years.manage'],
