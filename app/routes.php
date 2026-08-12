@@ -73,6 +73,9 @@ $router->delete('/api/sanctions/{id}', [SanctionController::class, 'destroy'], [
 $router->post('/api/sanctions/{id}/approve', [SanctionController::class, 'approve'], ['auth', 'can:sanctions.approve']);
 $router->post('/api/sanctions/{id}/reject',  [SanctionController::class, 'reject'],  ['auth', 'can:sanctions.approve']);
 $router->post('/api/sanctions/{id}/verify',  [SanctionController::class, 'verify'],  ['auth', 'can:sanctions.verify']);
+$router->get('/api/sanctions/{id}/attachments', [SanctionController::class, 'attachments'], ['auth', 'can:sanctions.view']);
+$router->get('/sanctions/{id}/attachments/{attachmentId}/view', [SanctionController::class, 'viewAttachment'], ['auth', 'can:sanctions.view']);
+$router->get('/sanctions/{id}/attachments/{attachmentId}/download', [SanctionController::class, 'download'], ['auth', 'can:sanctions.view']);
 
 // Purchase Requests
 $router->get('/api/purchase-requests/export', [PurchaseRequestController::class, 'export'], ['auth', 'can:reports.export']);

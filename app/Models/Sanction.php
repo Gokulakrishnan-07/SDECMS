@@ -131,4 +131,12 @@ class Sanction extends Model
         $stmt->execute($params);
         return $stmt->fetchAll();
     }
+
+    /**
+     * Attachments linked to a sanction.
+     */
+    public function attachments(int $sanctionId): array
+    {
+        return (new SanctionAttachment())->bySanctionId($sanctionId);
+    }
 }

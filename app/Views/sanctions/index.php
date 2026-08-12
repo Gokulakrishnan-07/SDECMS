@@ -97,6 +97,13 @@ $newSanctionLabel = $isDepartmentHead
                         <label class="form-label">Remarks</label>
                         <textarea class="form-control" id="sRemarks" rows="2" maxlength="500"></textarea>
                     </div>
+                    <div class="col-12" id="grpAttachments">
+                        <label class="form-label">Attachments</label>
+                        <input type="file" class="form-control" id="sAttachments" multiple
+                               accept=".pdf,.doc,.docx,.jpg,.jpeg,.png">
+                        <div class="form-text">PDF, DOC, DOCX, JPG, PNG — max 5 MB each</div>
+                        <div id="existingAttachments" class="mt-2"></div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
@@ -169,16 +176,78 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('sAmount').addEventListener('input', validateAmount);
     sDept.addEventListener('change', onDeptChange);
 
+    /* ── Attachment helpers ───────────────────────────────────── */
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+        return (bytes / 1048576).toFixed(1) + ' MB';
+    }
+
+    function fileIcon(name) {
+        const ext = (name || '').split('.').pop().toLowerCase();
+        const map = {
+            pdf: 'fa-file-pdf text-danger',
+            doc: 'fa-file-word text-primary',
+            docx: 'fa-file-word text-primary',
+            jpg: 'fa-file-image text-warning',
+            jpeg: 'fa-file-image text-warning',
+            png: 'fa-file-image text-info',
+        };
+        return map[ext] || 'fa-file';
+    }
+
+    async function loadExistingAttachments(sanctionId) {
+        const box = document.getElementById('existingAttachments');
+        box.innerHTML = '';
+        if (!sanctionId) return;
+        try {
+            const atts = (await App.api('/api/sanctions/' + sanctionId + '/attachments')).data;
+            if (atts.length === 0) return;
+            const list = atts.map(a => `
+                <div class="d-flex align-items-center gap-2 mb-1">
+                    <i class="fa-solid ${fileIcon(a.original_filename)}"></i>
+                    <a href="${App.base}/sanctions/${sanctionId}/attachments/${a.id}/view" target="_blank"
+                       class="text-decoration-none small">${App.esc(a.original_filename)}</a>
+                    <a href="${App.base}/sanctions/${sanctionId}/attachments/${a.id}/download" class="small text-muted" title="Download">
+                        <i class="fa-solid fa-download"></i>
+                    </a>
+                    <span class="text-muted small">(${formatFileSize(a.file_size)})</span>
+                </div>`).join('');
+            box.innerHTML = '<div class="small text-muted mb-1">Existing files:</div>' + list;
+        } catch (e) { /* ignore */ }
+    }
+
+    function renderAttachmentBadge(sanctionId, count) {
+        if (!count || count === 0) return '';
+        return `<a href="#" class="badge bg-secondary text-decoration-none act-atts" data-id="${sanctionId}" title="${count} attachment(s)">
+                    <i class="fa-solid fa-paperclip"></i> ${count}
+                </a>`;
+    }
+
+    /* ── Table load ───────────────────────────────────────────── */
     async function load() {
         const q = new URLSearchParams({ per_page: 1000 });
         if (fDept.value) q.set('department_id', fDept.value);
         if (document.getElementById('fStatus').value) q.set('status', document.getElementById('fStatus').value);
 
         const rows = (await App.api('/api/sanctions?' + q)).data;
+
+        /* Fetch attachment counts in parallel */
+        const attCounts = {};
+        await Promise.allSettled(rows.map(async r => {
+            try {
+                const atts = (await App.api('/api/sanctions/' + r.id + '/attachments')).data;
+                attCounts[r.id] = atts.length;
+            } catch (e) { attCounts[r.id] = 0; }
+        }));
+
         if (table) table.destroy();
         document.querySelector('#tblSanctions tbody').innerHTML = rows.map(r => `
             <tr>
-                <td><strong class="text-primary">${App.esc(r.sanction_no)}</strong></td>
+                <td>
+                    <strong class="text-primary">${App.esc(r.sanction_no)}</strong>
+                    ${renderAttachmentBadge(r.id, attCounts[r.id])}
+                </td>
                 <td>${App.esc(r.department_name)}</td>
                 <td>${App.money(r.amount)}</td>
                 <td>${r.status === 'approved' ? App.money(r.balance_amount) : '—'}</td>
@@ -200,10 +269,34 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     document.querySelector('#tblSanctions tbody').addEventListener('click', async e => {
-        const btn = e.target.closest('button');
+        const btn = e.target.closest('button') || e.target.closest('a.act-atts');
         if (!btn) return;
         const id = btn.dataset.id;
         const row = window._sRows[id];
+
+        /* ── Show attachments popover ─────────────────────────── */
+        if (btn.classList.contains('act-atts')) {
+            e.preventDefault();
+            try {
+                const atts = (await App.api('/api/sanctions/' + id + '/attachments')).data;
+                if (atts.length === 0) return;
+                const html = atts.map(a => `
+                    <div class="mb-1">
+                        <i class="fa-solid ${fileIcon(a.original_filename)} me-1"></i>
+                        <a href="${App.base}/sanctions/${id}/attachments/${a.id}/view" target="_blank">${App.esc(a.original_filename)}</a>
+                        <a href="${App.base}/sanctions/${id}/attachments/${a.id}/download" class="ms-1" title="Download"><i class="fa-solid fa-download"></i></a>
+                        <span class="text-muted">(${formatFileSize(a.file_size)})</span>
+                    </div>`).join('');
+                Swal.fire({
+                    title: 'Attachments — ' + (row ? row.sanction_no : ''),
+                    html: html,
+                    showConfirmButton: true,
+                    confirmButtonColor: '#0071e3',
+                    confirmButtonText: 'Close',
+                });
+            } catch (err) { App.toast('error', err.message); }
+            return;
+        }
 
         async function action(path, label) {
             if (!await App.confirmAction(label + '?', row.sanction_no + ' — ' + App.money(row.amount))) return;
@@ -222,8 +315,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('sAmount').value = row.amount;
             document.getElementById('sPurpose').value = row.purpose;
             document.getElementById('sRemarks').value = row.remarks || '';
+            document.getElementById('sAttachments').value = '';
             document.getElementById('sSave').disabled = false;
             App.bindAmountWords('#sAmount', '#sAmountWords');
+            loadExistingAttachments(id);
             modal.show();
         }
         else if (btn.classList.contains('act-verify'))  action('/verify', 'Verify sanction');
@@ -245,24 +340,31 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('grpDept').style.display = '';
         document.getElementById('budgetPanel').style.display = '';
         document.getElementById('sanctionForm').reset();
+        document.getElementById('existingAttachments').innerHTML = '';
         onDeptChange();
         modal.show();
     });
 
     document.getElementById('sanctionForm').addEventListener('submit', async e => {
         e.preventDefault();
-        const body = {
-            amount: document.getElementById('sAmount').value,
-            purpose: document.getElementById('sPurpose').value,
-            remarks: document.getElementById('sRemarks').value,
-        };
+        const fd = new FormData();
+        fd.append('amount', document.getElementById('sAmount').value);
+        fd.append('purpose', document.getElementById('sPurpose').value);
+        fd.append('remarks', document.getElementById('sRemarks').value);
+
+        // Append attachment files
+        const fileInput = document.getElementById('sAttachments');
+        for (let i = 0; i < fileInput.files.length; i++) {
+            fd.append('attachments[]', fileInput.files[i]);
+        }
+
         try {
             if (editing) {
-                await App.api('/api/sanctions/' + editing, { method: 'PUT', body });
+                await App.api('/api/sanctions/' + editing, { method: 'PUT', body: fd });
                 App.toast('success', 'Sanction updated');
             } else {
-                body.department_id = sDept.value;
-                const res = await App.api('/api/sanctions', { method: 'POST', body });
+                fd.append('department_id', sDept.value);
+                const res = await App.api('/api/sanctions', { method: 'POST', body: fd });
                 Swal.fire({
                     icon: 'success', title: 'Sanction created',
                     html: 'Sanction number: <strong>' + App.esc(res.data.sanction_no) + '</strong>',

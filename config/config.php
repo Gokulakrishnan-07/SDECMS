@@ -41,5 +41,9 @@ return [
             'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         ],
+        // Sanction requests deliberately accept a narrower document set than
+        // generic uploads. UploadService enforces both this profile and file
+        // signatures, rather than trusting the browser-provided MIME type.
+        'sanction_allowed_ext' => ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'],
     ],
 ];

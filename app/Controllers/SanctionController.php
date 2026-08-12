@@ -13,9 +13,11 @@ use App\Core\Validator;
 use App\Models\Budget;
 use App\Models\FinancialYear;
 use App\Models\Sanction;
+use App\Models\SanctionAttachment;
 use App\Services\AuditService;
 use App\Services\NotificationService;
 use App\Services\NumberService;
+use App\Services\UploadService;
 
 class SanctionController extends Controller
 {
@@ -65,6 +67,14 @@ class SanctionController extends Controller
         }
         $data = $v->validated();
 
+        // Reject an invalid attachment batch before creating a sanction or
+        // consuming a permanent sanction number.
+        try {
+            $this->validateAttachments();
+        } catch (\RuntimeException $e) {
+            Response::error($e->getMessage(), 422);
+        }
+
         $fy = (new FinancialYear())->resolve(isset($data['financial_year_id']) ? (int) $data['financial_year_id'] : null);
         if ($fy === null) {
             Response::error('No active financial year configured.', 422);
@@ -88,6 +98,13 @@ class SanctionController extends Controller
             ]);
             return (int) $pdo->lastInsertId();
         });
+
+        // ── Attachments (optional, multi-file) ────────────────────────
+        try {
+            $this->saveAttachments($id);
+        } catch (\RuntimeException $e) {
+            Response::error($e->getMessage(), 422);
+        }
 
         AuditService::log('create', 'sanctions', $id, "Sanction $sanctionNo created");
         NotificationService::notifyRoles(
@@ -130,6 +147,13 @@ class SanctionController extends Controller
             'purpose' => $data['purpose'],
             'remarks' => $data['remarks'] ?? $row['remarks'],
         ]);
+
+        // ── Additional attachments ──────────────────────────────────
+        try {
+            $this->saveAttachments((int) $id);
+        } catch (\RuntimeException $e) {
+            Response::error($e->getMessage(), 422);
+        }
 
         AuditService::log('update', 'sanctions', (int) $id, 'Sanction ' . $row['sanction_no'] . ' updated');
         Response::json(null, 200, 'Sanction updated.');
@@ -240,6 +264,76 @@ class SanctionController extends Controller
         );
     }
 
+    /** Open a safe preview for PDFs/images; other allowed files download. */
+    public function viewAttachment(string $id, string $attachmentId): void
+    {
+        $this->streamAttachment((int) $id, (int) $attachmentId, false);
+    }
+
+    /** Download an attachment after the same department-scoped check. */
+    public function download(string $id, string $attachmentId): void
+    {
+        $this->streamAttachment((int) $id, (int) $attachmentId, true);
+    }
+
+    private function streamAttachment(int $sanctionId, int $attachmentId, bool $forceDownload): void
+    {
+        $sanction = (new Sanction())->find($sanctionId);
+        if ($sanction === null) {
+            http_response_code(404);
+            exit('Sanction not found.');
+        }
+        if (!Auth::canAccessDepartment((int) $sanction['department_id'])) {
+            http_response_code(403);
+            exit('Forbidden.');
+        }
+
+        $att = (new SanctionAttachment())->find($attachmentId);
+        if ($att === null || (int) $att['sanction_id'] !== $sanctionId) {
+            http_response_code(404);
+            exit('Attachment not found.');
+        }
+
+        $fullPath = rtrim(config('uploads.path'), '/\\') . DIRECTORY_SEPARATOR
+                  . str_replace('/', DIRECTORY_SEPARATOR, $att['file_path']);
+        if (!is_file($fullPath)) {
+            http_response_code(404);
+            exit('File not found on disk.');
+        }
+
+        $previewable = in_array($att['mime_type'], ['application/pdf', 'image/png', 'image/jpeg'], true);
+        $disposition = (!$forceDownload && $previewable) ? 'inline' : 'attachment';
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Type: ' . $att['mime_type']);
+        header('Content-Disposition: ' . $disposition . '; filename="' . self::downloadFilename($att['original_filename']) . '"');
+        header('Content-Length: ' . filesize($fullPath));
+        header('Cache-Control: private, max-age=3600');
+        readfile($fullPath);
+        exit;
+    }
+
+    private static function downloadFilename(string $name): string
+    {
+        return str_replace(['"', "\r", "\n"], '_', basename($name));
+    }
+
+    /**
+     * GET /api/sanctions/{id}/attachments — JSON list of attachments.
+     */
+    public function attachments(string $id): void
+    {
+        $sanction = (new Sanction())->find((int) $id);
+        if ($sanction === null) {
+            Response::error('Sanction not found.', 404);
+        }
+        if (!Auth::canAccessDepartment((int) $sanction['department_id'])) {
+            Response::error('Forbidden.', 403);
+        }
+
+        $list = (new SanctionAttachment())->bySanctionId((int) $id);
+        Response::json($list);
+    }
+
     /**
      * DELETE /api/sanctions/{id} — administrator only. Approved sanctions that
      * hold budget commitments or have requisitions cannot be deleted.
@@ -255,9 +349,95 @@ class SanctionController extends Controller
             Response::error('An approved sanction cannot be deleted because it may hold budget commitments and requisitions.', 422);
         }
 
+        $attachments = (new SanctionAttachment())->bySanctionId((int) $id);
         $model->delete((int) $id);
+        foreach ($attachments as $attachment) {
+            UploadService::deleteStored($attachment['file_path']);
+        }
         AuditService::log('delete', 'sanctions', (int) $id, 'Sanction ' . $row['sanction_no'] . ' deleted');
         Response::json(null, 200, 'Sanction deleted.');
+    }
+
+    // ── Private helpers ──────────────────────────────────────────────
+
+    /**
+     * Process a fully validated file batch. Metadata writes are transactional;
+     * files moved before a failed database write are removed again.
+     */
+    private function saveAttachments(int $sanctionId): void
+    {
+        if (empty($_FILES['attachments']['name'][0])) {
+            return;
+        }
+
+        $files = $_FILES['attachments'];
+        $count = count($files['name']);
+        $batch = [];
+
+        for ($i = 0; $i < $count; $i++) {
+            $file = [
+                'name'     => $files['name'][$i],
+                'type'     => $files['type'][$i],
+                'tmp_name' => $files['tmp_name'][$i],
+                'error'    => $files['error'][$i],
+                'size'     => $files['size'][$i],
+            ];
+            // Skip empty slots (browser may send blank entries)
+            if ($file['error'] === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            UploadService::validateSanctionAttachment($file);
+            $batch[] = $file;
+        }
+        if ($batch === []) {
+            return;
+        }
+
+        $stored = [];
+        try {
+            Database::transaction(function ($pdo) use ($batch, $sanctionId, &$stored) {
+                $stmt = $pdo->prepare(
+                    'INSERT INTO sanction_attachments
+                        (sanction_id, original_filename, stored_filename, file_path, file_extension,
+                         mime_type, file_size, uploaded_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                );
+                foreach ($batch as $file) {
+                    $meta = UploadService::storeSanctionAttachment($file);
+                    $stored[] = $meta['file_path'];
+                    $stmt->execute([
+                        $sanctionId, $meta['original_filename'], $meta['stored_filename'],
+                        $meta['file_path'], $meta['file_extension'], $meta['mime_type'],
+                        $meta['file_size'], Auth::id(),
+                    ]);
+                }
+            });
+        } catch (\Throwable $e) {
+            foreach ($stored as $path) {
+                UploadService::deleteStored($path);
+            }
+            throw $e;
+        }
+    }
+
+    /** Validate each populated multi-file field without persisting anything. */
+    private function validateAttachments(): void
+    {
+        if (empty($_FILES['attachments']['name'][0])) {
+            return;
+        }
+        $files = $_FILES['attachments'];
+        foreach ($files['name'] as $i => $_name) {
+            $file = [
+                'name'     => $files['name'][$i],
+                'tmp_name' => $files['tmp_name'][$i],
+                'error'    => $files['error'][$i],
+                'size'     => $files['size'][$i],
+            ];
+            if ($file['error'] !== UPLOAD_ERR_NO_FILE) {
+                UploadService::validateSanctionAttachment($file);
+            }
+        }
     }
 
     /**
