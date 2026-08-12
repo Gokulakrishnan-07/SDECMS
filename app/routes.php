@@ -40,6 +40,9 @@ $router->get('/notifications',     [NotificationController::class, 'page'], ['au
 $router->get('/users',             [UserController::class, 'page'],        ['auth', 'can:users.manage']);
 $router->get('/audit-logs',        [UserController::class, 'auditPage'],   ['auth', 'can:audit_logs.view']);
 $router->get('/settings',          [SettingsController::class, 'page'],    ['auth']);
+$router->get('/sanctions/{id}/view', [SanctionController::class, 'viewDetail'], ['auth', 'can:sanctions.view']);
+$router->get('/purchase-requests/{id}/view', [PurchaseRequestController::class, 'viewDetail'], ['auth', 'can:purchase_requests.view']);
+$router->get('/purchase-orders/{id}/view', [PurchaseOrderController::class, 'viewDetail'], ['auth', 'can:purchase_orders.view']);
 $router->get('/sanctions/{id}/print', [SanctionController::class, 'printView'], ['auth', 'can:sanctions.view']);
 $router->get('/purchase-orders/{id}/print', [PurchaseOrderController::class, 'printView'], ['auth', 'can:purchase_orders.view']);
 

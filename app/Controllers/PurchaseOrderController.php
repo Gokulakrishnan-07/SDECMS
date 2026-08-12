@@ -27,6 +27,28 @@ class PurchaseOrderController extends Controller
         $this->view('purchase_orders.index', ['pageTitle' => 'Purchase Orders']);
     }
 
+    /** GET-only, department-scoped purchase order detail screen. */
+    public function viewDetail(string $id): void
+    {
+        $order = (new PurchaseOrder())->findWithRelations((int) $id);
+        if ($order === null) {
+            http_response_code(404);
+            require BASE_PATH . '/app/Views/errors/404.php';
+            return;
+        }
+        if (!Auth::canAccessDepartment((int) $order['department_id'])) {
+            http_response_code(403);
+            require BASE_PATH . '/app/Views/errors/403.php';
+            return;
+        }
+
+        $this->view('purchase_orders.view', [
+            'pageTitle' => 'View Purchase Order',
+            'order'     => $order,
+            'budget'    => (new Budget())->summary((int) $order['department_id'], (int) $order['financial_year_id']),
+        ]);
+    }
+
     /**
      * GET /api/purchase-orders
      */

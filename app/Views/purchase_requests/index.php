@@ -238,6 +238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <td>${App.badge(r.status)}</td>
                 <td>${App.esc(r.created_by_name || '—')}</td>
                 <td class="text-end text-nowrap">
+                    <a class="btn btn-sm btn-outline-secondary" href="${App.base}/purchase-requests/${r.id}/view" title="View"><i class="fa-solid fa-eye"></i></a>
                     ${canCreate && own && ['draft','rejected'].includes(r.status) ? `
                         <button class="btn btn-sm btn-outline-secondary act-edit" data-id="${r.id}" title="Edit"><i class="fa-solid fa-pen"></i></button>` : ''}
                     ${canCreate && own && r.status === 'draft' ? `

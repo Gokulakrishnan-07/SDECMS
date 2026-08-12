@@ -255,6 +255,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <td>${App.badge(r.status)}</td>
                 <td>${App.esc(r.created_by_name || '—')}</td>
                 <td class="text-end text-nowrap">
+                    <a class="btn btn-sm btn-outline-secondary" href="${App.base}/sanctions/${r.id}/view" title="View"><i class="fa-solid fa-eye"></i></a>
                     <a class="btn btn-sm btn-outline-secondary" href="${App.base}/sanctions/${r.id}/print" target="_blank" title="Print"><i class="fa-solid fa-print"></i></a>
                     ${canCreate && r.status === 'pending' ? `<button class="btn btn-sm btn-outline-secondary act-edit" data-id="${r.id}" title="Edit"><i class="fa-solid fa-pen"></i></button>` : ''}
                     ${canVerify && r.status === 'pending' ? `<button class="btn btn-sm btn-outline-primary act-verify" data-id="${r.id}" title="Verify"><i class="fa-solid fa-clipboard-check"></i></button>` : ''}

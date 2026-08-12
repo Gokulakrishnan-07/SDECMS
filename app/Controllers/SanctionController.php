@@ -26,6 +26,29 @@ class SanctionController extends Controller
         $this->view('sanctions.index', ['pageTitle' => 'Sanction Amount']);
     }
 
+    /** GET-only, department-scoped sanction detail screen. */
+    public function viewDetail(string $id): void
+    {
+        $sanction = (new Sanction())->findWithRelations((int) $id);
+        if ($sanction === null) {
+            http_response_code(404);
+            require BASE_PATH . '/app/Views/errors/404.php';
+            return;
+        }
+        if (!Auth::canAccessDepartment((int) $sanction['department_id'])) {
+            http_response_code(403);
+            require BASE_PATH . '/app/Views/errors/403.php';
+            return;
+        }
+
+        $this->view('sanctions.view', [
+            'pageTitle' => 'View Sanction Request',
+            'sanction'  => $sanction,
+            'budget'    => (new Budget())->summary((int) $sanction['department_id'], (int) $sanction['financial_year_id']),
+            'attachments' => (new SanctionAttachment())->bySanctionId((int) $id),
+        ]);
+    }
+
     /**
      * GET /api/sanctions
      */

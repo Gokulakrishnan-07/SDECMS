@@ -87,12 +87,14 @@ class Sanction extends Model
         $stmt = $this->db()->prepare(
             'SELECT s.*, d.name AS department_name, d.code AS department_code,
                     fy.label AS financial_year,
-                    cu.name AS created_by_name, au.name AS approved_by_name
+                    (s.amount - s.requisitioned_amount) AS balance_amount,
+                    cu.name AS created_by_name, au.name AS approved_by_name, vu.name AS verified_by_name
              FROM sanctions s
              JOIN departments d      ON d.id = s.department_id
              JOIN financial_years fy ON fy.id = s.financial_year_id
-             LEFT JOIN users cu ON cu.id = s.created_by
-             LEFT JOIN users au ON au.id = s.approved_by
+            LEFT JOIN users cu ON cu.id = s.created_by
+            LEFT JOIN users au ON au.id = s.approved_by
+            LEFT JOIN users vu ON vu.id = s.verified_by
              WHERE s.id = ? LIMIT 1'
         );
         $stmt->execute([$id]);

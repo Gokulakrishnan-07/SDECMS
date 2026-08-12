@@ -81,4 +81,26 @@ class PurchaseRequest extends Model
         }
         return $this->count($where, $params);
     }
+
+    /** One requisition with the same display relations used by its listing. */
+    public function findWithRelations(int $id): ?array
+    {
+        $stmt = $this->db()->prepare(
+            'SELECT pr.*, d.name AS department_name, d.code AS department_code, d.workflow_type,
+                    fy.label AS financial_year, s.sanction_no AS parent_sanction_no,
+                    s.amount AS sanction_amount, s.requisitioned_amount, du.unit_name, du.unit_code,
+                    cu.name AS created_by_name, au.name AS approved_by_name
+             FROM purchase_requests pr
+             JOIN departments d ON d.id = pr.department_id
+             JOIN financial_years fy ON fy.id = pr.financial_year_id
+             LEFT JOIN sanctions s ON s.id = pr.sanction_id
+             LEFT JOIN department_units du ON du.id = pr.unit_id
+             LEFT JOIN users cu ON cu.id = pr.created_by
+             LEFT JOIN users au ON au.id = pr.approved_by
+             WHERE pr.id = ? LIMIT 1'
+        );
+        $stmt->execute([$id]);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
+    }
 }

@@ -225,7 +225,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <td>${App.badge(r.status)}</td>
                 <td class="text-nowrap">${App.esc((r.created_at || '').slice(0, 16))}</td>
                 <td class="text-end text-nowrap">
-                    <button class="btn btn-sm btn-outline-secondary act-view" data-id="${r.id}" title="Details & history"><i class="fa-solid fa-eye"></i></button>
+                    <a class="btn btn-sm btn-outline-secondary" href="${App.base}/purchase-orders/${r.id}/view" title="View"><i class="fa-solid fa-eye"></i></a>
                     <a class="btn btn-sm btn-outline-secondary" href="${App.base}/purchase-orders/${r.id}/print" target="_blank" title="Print"><i class="fa-solid fa-print"></i></a>
                     ${canManage && r.status === 'draft' ? `<button class="btn btn-sm btn-outline-secondary act-edit" data-id="${r.id}" title="Edit"><i class="fa-solid fa-pen"></i></button>` : ''}
                     ${canManage && !['paid','cancelled'].includes(r.status) ? `<button class="btn btn-sm btn-outline-primary act-status" data-id="${r.id}" title="Change status"><i class="fa-solid fa-arrow-right-arrow-left"></i></button>` : ''}

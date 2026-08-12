@@ -37,6 +37,28 @@ class PurchaseRequestController extends Controller
         $this->view('purchase_requests.index', ['pageTitle' => 'Purchase Requisitions']);
     }
 
+    /** GET-only, department-scoped purchase requisition detail screen. */
+    public function viewDetail(string $id): void
+    {
+        $request = (new PurchaseRequest())->findWithRelations((int) $id);
+        if ($request === null) {
+            http_response_code(404);
+            require BASE_PATH . '/app/Views/errors/404.php';
+            return;
+        }
+        if (!Auth::canAccessDepartment((int) $request['department_id'])) {
+            http_response_code(403);
+            require BASE_PATH . '/app/Views/errors/403.php';
+            return;
+        }
+
+        $this->view('purchase_requests.view', [
+            'pageTitle' => 'View Purchase Request',
+            'request'   => $request,
+            'budget'    => (new Budget())->summary((int) $request['department_id'], (int) $request['financial_year_id']),
+        ]);
+    }
+
     /**
      * GET /api/purchase-requests
      */
