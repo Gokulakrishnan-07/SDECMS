@@ -20,6 +20,7 @@ use App\Services\AuditService;
 use App\Services\NotificationService;
 use App\Services\NumberService;
 use App\Services\UploadService;
+use App\Services\MaintenanceHierarchy;
 
 /**
  * Purchase Requisitions are always raised UNDER an approved Sanction and get
@@ -46,6 +47,9 @@ class PurchaseRequestController extends Controller
             require BASE_PATH . '/app/Views/errors/404.php';
             return;
         }
+        if (Auth::role() === 'accounts' && $request['status'] !== 'approved') {
+            http_response_code(404); require BASE_PATH . '/app/Views/errors/404.php'; return;
+        }
         if (!Auth::canAccessDepartment((int) $request['department_id'])) {
             http_response_code(403);
             require BASE_PATH . '/app/Views/errors/403.php';
@@ -57,6 +61,13 @@ class PurchaseRequestController extends Controller
             'request'   => $request,
             'budget'    => (new Budget())->summary((int) $request['department_id'], (int) $request['financial_year_id']),
         ]);
+    }
+
+    public function printView(string $id): void
+    {
+        $request = (new PurchaseRequest())->findWithRelations((int) $id);
+        if ($request === null || !Auth::canAccessDepartment((int) $request['department_id']) || (Auth::role() === 'accounts' && $request['status'] !== 'approved')) { http_response_code(404); exit('Purchase request not found.'); }
+        $this->view('purchase_requests.print', ['pageTitle' => 'Purchase Request Report', 'request' => $request], '');
     }
 
     /**
@@ -73,9 +84,11 @@ class PurchaseRequestController extends Controller
             $dept = Auth::departmentId();
         }
 
+        $status = Auth::role() === 'accounts' ? 'approved' : (string) Request::query('status', '');
         $result = (new PurchaseRequest())->paginate(
             $p['offset'], $p['perPage'], $p['search'],
-            $fy, $dept, (string) Request::query('status', '')
+            $fy, $dept, $status,
+            (string) Request::query('maintenance_category', ''), (string) Request::query('work_location', '')
         );
 
         Response::paginated($result['items'], $result['total'], $p['page'], $p['perPage']);
@@ -136,12 +149,12 @@ class PurchaseRequestController extends Controller
 
             $stmt = $pdo->prepare(
                 'INSERT INTO purchase_requests
-                    (pr_no, sanction_id, subdivision_code, unit_id, department_id, financial_year_id,
+                    (pr_no, sanction_id, subdivision_code, unit_id, department_id, maintenance_category, work_location_type, work_location_id, other_work_location, financial_year_id,
                      title, description, amount, remarks, attachment_path, attachment_name, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $stmt->execute([
-                $prNo, (int) $sanction['id'], $code, $unitId, $deptId, $fyId,
+                $prNo, (int) $sanction['id'], $code, $unitId, $deptId, $sanction['maintenance_category'] ?? null, $sanction['work_location_type'] ?? null, $sanction['work_location_id'] ?? null, $sanction['other_work_location'] ?? null, $fyId,
                 $data['title'], $data['description'] ?? null, (float) $data['amount'],
                 $data['remarks'] ?? null, $attachmentPath, $attachmentName, Auth::id(),
             ]);
@@ -149,6 +162,7 @@ class PurchaseRequestController extends Controller
         });
 
         AuditService::log('create', 'purchase_requests', $result['id'], "Purchase requisition {$result['pr_no']} created");
+        \App\Services\ApprovalHistoryService::add('purchase_request', $result['id'], 'created');
         Response::json($result, 201, 'Purchase requisition saved as draft.');
     }
 
@@ -204,6 +218,7 @@ class PurchaseRequestController extends Controller
 
         (new PurchaseRequest())->update((int) $id, $update);
         AuditService::log('update', 'purchase_requests', (int) $id, "Purchase requisition {$row['pr_no']} updated");
+        \App\Services\ApprovalHistoryService::add('purchase_request', (int) $id, 'modified');
         Response::json(null, 200, 'Purchase requisition updated.');
     }
 
@@ -232,6 +247,7 @@ class PurchaseRequestController extends Controller
 
         (new PurchaseRequest())->update((int) $id, ['status' => 'submitted']);
         AuditService::log('submit', 'purchase_requests', (int) $id, "Purchase requisition {$row['pr_no']} submitted");
+        \App\Services\ApprovalHistoryService::add('purchase_request', (int) $id, $row['reject_reason'] ? 'resubmitted' : 'submitted');
         NotificationService::notifyRoles(
             ['administrator', 'principal'],
             'pr_new',
@@ -285,6 +301,7 @@ class PurchaseRequestController extends Controller
         });
 
         AuditService::log('approve', 'purchase_requests', (int) $id, "Purchase requisition {$row['pr_no']} approved");
+        \App\Services\ApprovalHistoryService::add('purchase_request', (int) $id, 'approved');
         $this->notifyDecision($row, 'approved');
 
         $msg = $isSimple
@@ -303,14 +320,19 @@ class PurchaseRequestController extends Controller
             Response::error('Only submitted requisitions can be rejected.', 422);
         }
 
+        $reason = trim((string) Request::input('reason', ''));
+        if ($reason === '') Response::error('A rejection reason is required.', 422, ['reason' => 'Enter a clear rejection reason.']);
         (new PurchaseRequest())->update((int) $id, [
             'status'        => 'rejected',
             'approved_by'   => Auth::id(),
             'approved_at'   => date('Y-m-d H:i:s'),
-            'reject_reason' => substr((string) Request::input('reason', ''), 0, 500) ?: null,
+            'reject_reason' => substr($reason, 0, 500),
+            'rejected_by'   => Auth::id(),
+            'rejected_at'   => date('Y-m-d H:i:s'),
         ]);
         AuditService::log('reject', 'purchase_requests', (int) $id, "Purchase requisition {$row['pr_no']} rejected");
-        $this->notifyDecision($row, 'rejected');
+        \App\Services\ApprovalHistoryService::add('purchase_request', (int) $id, 'rejected', $reason);
+        $this->notifyDecision($row, 'rejected', $reason);
         Response::json(null, 200, 'Purchase requisition rejected.');
     }
 
@@ -335,11 +357,13 @@ class PurchaseRequestController extends Controller
     public function export(): void
     {
         $dept = Auth::role() === 'department_head' ? Auth::departmentId() : null;
-        $rows = (new PurchaseRequest())->paginate(0, 10000, '', null, $dept)['items'];
+        $model = new PurchaseRequest();
+        $single = Request::query('id') ? $model->findWithRelations((int) Request::query('id')) : null;
+        $rows = $single ? [$single] : $model->paginate(0, 10000, '', null, $dept, Auth::role() === 'accounts' ? 'approved' : '')['items'];
 
-        $headers = ['Requisition No', 'Sanction', 'Department', 'Unit', 'Title', 'Amount', 'Status', 'Created By', 'Created At'];
+        $headers = ['Requisition No', 'Sanction', 'Department', 'Unit', 'Maintenance Category', 'Work Location / Service Area', 'Other Work Location', 'Title', 'Amount', 'Status', 'Created By', 'Created At'];
         $data    = array_map(static fn ($r) => [
-            $r['pr_no'], $r['parent_sanction_no'] ?? '', $r['department_name'], $r['unit_name'] ?? '',
+            $r['pr_no'], $r['parent_sanction_no'] ?? '', $r['department_name'], $r['unit_name'] ?? '', $r['maintenance_category'] ?? '', $r['work_location_name'] ?? '', $r['other_work_location'] ?? '',
             $r['title'], $r['amount'], $r['status'], $r['created_by_name'], $r['created_at'],
         ], $rows);
 
@@ -379,6 +403,11 @@ class PurchaseRequestController extends Controller
     private function resolveUnit(int $departmentId, mixed $unitId): ?int
     {
         $dept = (new Department())->find($departmentId);
+        // Maintenance uses the independent maintenance work-location field;
+        // it must not force the legacy department-unit selector.
+        if (MaintenanceHierarchy::isMaintenance($departmentId)) {
+            return null;
+        }
         if ($dept === null || (int) $dept['has_units'] !== 1) {
             return null; // department has no units — ignore any supplied value
         }
@@ -391,16 +420,28 @@ class PurchaseRequestController extends Controller
         return (int) $unitId;
     }
 
-    private function notifyDecision(array $row, string $decision): void
+    private function notifyDecision(array $row, string $decision, ?string $reason = null): void
     {
         $targets = $row['created_by'] !== null ? [(int) $row['created_by']] : [];
         NotificationService::notifyUsers(
             $targets,
             'pr_' . $decision,
             'Requisition ' . ucfirst($decision),
-            "{$row['pr_no']} ({$row['title']}) has been $decision.",
+            "{$row['pr_no']} ({$row['title']}) has been $decision." . ($reason ? " Reason: $reason" : ''),
             '/purchase-requests'
         );
+        if ($decision === 'approved') {
+            $department = (new Department())->find((int) $row['department_id']);
+            $departmentName = $department['name'] ?? 'Unknown department';
+            $actor = Auth::user()['name'] ?? 'System';
+            NotificationService::notifyRoles(
+                ['accounts'],
+                'accounts_forwarded',
+                'Purchase Request approved for Accounts',
+                "Purchase Request {$row['pr_no']} | Department: {$departmentName} | Amount: " . number_format((float) $row['amount'], 2) . " | Approved by: {$actor} | " . date('Y-m-d H:i:s'),
+                '/purchase-requests/' . (int) $row['id'] . '/view'
+            );
+        }
     }
 
     private function findOrFail(int $id): array
@@ -413,6 +454,64 @@ class PurchaseRequestController extends Controller
             Response::error('You cannot access requisitions of another department.', 403);
         }
         return $row;
+    }
+
+    public function viewAttachment(string $id): void
+    {
+        $this->streamAttachment((int) $id, false);
+    }
+
+    public function downloadAttachment(string $id): void
+    {
+        $this->streamAttachment((int) $id, true);
+    }
+
+    private function streamAttachment(int $id, bool $forceDownload): void
+    {
+        $request = (new PurchaseRequest())->find($id);
+        if ($request === null || empty($request['attachment_path'])) {
+            http_response_code(404);
+            exit('Attachment not found.');
+        }
+        if (!Auth::canAccessDepartment((int) $request['department_id']) || (Auth::role() === 'accounts' && $request['status'] !== 'approved')) {
+            http_response_code(403);
+            exit('Forbidden.');
+        }
+
+        $root = realpath(rtrim(config('uploads.path'), '/\\'));
+        $fullPath = $root === false ? false : realpath($root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $request['attachment_path']));
+        if ($root === false || $fullPath === false || !str_starts_with($fullPath, $root . DIRECTORY_SEPARATOR) || !is_file($fullPath)) {
+            http_response_code(404);
+            exit('File not found on disk.');
+        }
+
+        $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($fullPath) ?: 'application/octet-stream';
+        $extension = strtolower(pathinfo((string) ($request['attachment_name'] ?: $fullPath), PATHINFO_EXTENSION));
+        if (in_array($extension, ['jpg', 'jpeg'], true)) $mime = 'image/jpeg';
+        if ($extension === 'png') $mime = 'image/png';
+        $fallbacks = [
+            'pdf' => 'application/pdf', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+            'doc' => 'application/msword',
+            'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'xls' => 'application/vnd.ms-excel',
+            'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'csv' => 'text/csv',
+        ];
+        if ($mime === 'application/octet-stream' && isset($fallbacks[$extension])) $mime = $fallbacks[$extension];
+        $filename = basename((string) ($request['attachment_name'] ?: basename($fullPath)));
+        $safeFilename = str_replace(['"', "\r", "\n"], '_', $filename);
+        $inline = !$forceDownload && in_array($mime, ['application/pdf', 'image/png', 'image/jpeg'], true);
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        header('X-Content-Type-Options: nosniff');
+        header('Content-Type: ' . $mime);
+        header('Content-Transfer-Encoding: binary');
+        header('Content-Disposition: ' . ($inline ? 'inline' : 'attachment') . '; filename="' . $safeFilename . '"; filename*=UTF-8\'\'' . rawurlencode($filename));
+        header('Content-Length: ' . filesize($fullPath));
+        header('Cache-Control: private, max-age=3600');
+        readfile($fullPath);
+        exit;
     }
 
     private function assertOwnership(array $row): void

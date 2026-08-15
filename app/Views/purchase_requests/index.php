@@ -32,6 +32,8 @@
 <div class="glass-card table-card">
     <div class="row g-2 mb-3">
         <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fDept"><option value="">All Departments</option></select></div>
+        <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fMaintenanceCategory"><option value="">All Maintenance Categories</option><option>Civil</option><option>Electrical</option><option>Plumbing</option></select></div>
+        <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fWorkLocation"><option value="">All Work Locations</option></select></div>
         <div class="col-6 col-md-3">
             <select class="form-select form-select-sm" id="fStatus">
                 <option value="">All Statuses</option>
@@ -77,6 +79,8 @@
                         <label class="form-label" id="unitLabel">Unit</label>
                         <select class="form-select" id="pUnit"></select>
                     </div>
+                    <div class="col-md-6" id="grpMaintenanceCategory" style="display:none"><label class="form-label">Maintenance Category</label><input class="form-control" id="pMaintenanceCategory" readonly></div>
+                    <div class="col-md-6" id="grpWorkLocation" style="display:none"><label class="form-label">Work Location</label><input class="form-control" id="pWorkLocation" readonly></div>
 
                     <div class="col-12">
                         <div class="budget-panel is-empty" id="budgetPanel">
@@ -132,6 +136,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     App.bindAmountWords('#pAmount', '#pAmountWords');
 
     const depts = (await App.api('/api/departments')).data;
+    const locations = (await App.api('/api/work-locations')).data;
+    locations.forEach(l => document.getElementById('fWorkLocation').add(new Option(l.label, l.value)));
+    document.getElementById('fWorkLocation').add(new Option('Others', 'other'));
     const fDept = document.getElementById('fDept');
     depts.forEach(d => fDept.add(new Option(d.name, d.id)));
 
@@ -162,11 +169,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         const s = sanctions[id];
         const deptId = s.department_id;
+        const maintenance = !!(s.department_code === 'MNT');
+        document.getElementById('grpMaintenanceCategory').style.display = maintenance ? '' : 'none';
+        document.getElementById('grpWorkLocation').style.display = maintenance ? '' : 'none';
+        document.getElementById('pMaintenanceCategory').value = s.maintenance_category || 'Housekeeping';
+        document.getElementById('pWorkLocation').value = s.work_location_name || '';
 
         // Units (mandatory when the department has any)
         const units = (await App.api('/api/departments/' + deptId + '/units')).data;
         const uSel = document.getElementById('pUnit');
-        if (units.length) {
+        if (units.length && !maintenance) {
             uSel.length = 0;
             uSel.add(new Option('— Select unit —', ''));
             units.forEach(u => uSel.add(new Option(u.unit_name, u.id)));
@@ -217,6 +229,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function load() {
         const q = new URLSearchParams({ per_page: 1000 });
         if (fDept.value) q.set('department_id', fDept.value);
+        if (document.getElementById('fMaintenanceCategory').value) q.set('maintenance_category', document.getElementById('fMaintenanceCategory').value);
+        if (document.getElementById('fWorkLocation').value) q.set('work_location', document.getElementById('fWorkLocation').value);
         if (document.getElementById('fStatus').value) q.set('status', document.getElementById('fStatus').value);
 
         const rows = (await App.api('/api/purchase-requests?' + q)).data;
@@ -228,7 +242,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <td><strong class="text-primary">${App.esc(r.pr_no)}</strong></td>
                 <td>${App.esc(r.parent_sanction_no || '—')}</td>
                 <td>${App.esc(r.department_name)}</td>
-                <td>${App.esc(r.unit_name || '—')}</td>
+                <td>${r.department_code === 'MNT' ? (r.work_location_name ? `<div class="small text-secondary">${App.esc(r.maintenance_category || '')} · ${App.esc(r.work_location_name)}</div>` : '—') : `${App.esc(r.unit_name || '—')}${r.work_location_name ? `<div class="small text-secondary">${App.esc(r.maintenance_category || 'Housekeeping')} · ${App.esc(r.work_location_name)}</div>` : ''}`}</td>
                 <td>
                     ${App.esc(r.title)}
                     ${r.attachment_path ? '<i class="fa-solid fa-paperclip text-secondary ms-1" title="Has attachment"></i>' : ''}
@@ -282,8 +296,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else if (btn.classList.contains('act-reject')) {
             const { value: reason, isConfirmed } = await Swal.fire({
                 title: 'Reject ' + row.pr_no + '?',
-                input: 'text', inputLabel: 'Reason (optional)',
+                input: 'textarea', inputLabel: 'Rejection Reason',
                 showCancelButton: true, confirmButtonText: 'Reject', confirmButtonColor: '#ff375f',
+                inputValidator: value => !value || !value.trim() ? 'Rejection reason is required.' : undefined,
             });
             if (!isConfirmed) return;
             try {
@@ -359,7 +374,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (err) { App.toast('error', err.message); }
     });
 
-    ['fDept', 'fStatus'].forEach(id => document.getElementById(id).addEventListener('change', load));
+    ['fDept', 'fStatus', 'fMaintenanceCategory', 'fWorkLocation'].forEach(id => document.getElementById(id).addEventListener('change', load));
     document.getElementById('expCsv').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/purchase-requests/export?format=csv'; });
     document.getElementById('expExcel').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/purchase-requests/export?format=excel'; });
 

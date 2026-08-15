@@ -7,7 +7,7 @@ $back = base_url('sanctions');
         <h1 class="page-title">Sanction Request</h1>
         <span class="page-sub">Read-only details for <?= e($sanction['sanction_no']) ?></span>
     </div>
-    <a class="btn btn-outline-secondary btn-sm" href="<?= e($back) ?>"><i class="fa-solid fa-arrow-left me-1"></i> Back to Sanctions</a>
+    <div><a class="btn btn-outline-secondary btn-sm" href="<?= e(base_url('api/sanctions/export?format=excel&id=' . $sanction['id'])) ?>">Excel</a> <a class="btn btn-outline-secondary btn-sm" href="<?= e($back) ?>"><i class="fa-solid fa-arrow-left me-1"></i> Back to Sanctions</a></div>
 </div>
 
 <div class="glass-card p-4 mb-3">
@@ -16,12 +16,13 @@ $back = base_url('sanctions');
         <span class="badge text-bg-secondary text-capitalize"><?= e($sanction['status']) ?></span>
     </div>
     <div class="row g-3 small">
-        <div class="col-md-4"><span class="text-secondary d-block">Department</span><?= e($sanction['department_name']) ?></div>
+        <div class="col-md-4"><span class="text-secondary d-block">Department</span><?= e($sanction['department_name']) ?><?php if (!empty($sanction['work_location_type'])): ?><div class="small text-secondary"><?= !empty($sanction['maintenance_category']) ? e($sanction['maintenance_category']) . ' · ' : '' ?><?= e($sanction['work_location_name'] ?? 'No records available.') ?></div><?php endif; ?></div>
         <div class="col-md-4"><span class="text-secondary d-block">Financial Year</span><?= e($sanction['financial_year']) ?></div>
         <div class="col-md-4"><span class="text-secondary d-block">Requested Amount</span><strong><?= money((float) $sanction['amount']) ?></strong></div>
         <div class="col-md-4"><span class="text-secondary d-block">Remaining Sanction Balance</span><?= money((float) $sanction['balance_amount']) ?></div>
         <div class="col-md-8"><span class="text-secondary d-block">Purpose</span><?= e($sanction['purpose']) ?></div>
         <div class="col-12"><span class="text-secondary d-block">Previous Remarks</span><?= $sanction['remarks'] ? nl2br(e($sanction['remarks'])) : '<span class="text-secondary">No records available.</span>' ?></div>
+        <?php if ($sanction['status'] === 'rejected' && !empty($sanction['reject_reason'])): ?><div class="col-12"><span class="text-secondary d-block">Rejection Reason</span><span class="text-danger"><?= nl2br(e($sanction['reject_reason'])) ?></span><div class="small text-secondary">Rejected by <?= e($sanction['rejected_by_name'] ?? $sanction['approved_by_name'] ?? 'Administrator') ?><?= !empty($sanction['rejected_at']) ? ' · ' . e($sanction['rejected_at']) : '' ?></div></div><?php endif; ?>
     </div>
 </div>
 
@@ -57,5 +58,6 @@ $back = base_url('sanctions');
         <?php if ($sanction['verified_at']): ?><div class="mb-2"><strong>Verified</strong><span class="text-secondary ms-2"><?= e($sanction['verified_by_name'] ?? 'System') ?> · <?= e($sanction['verified_at']) ?></span></div><?php endif; ?>
         <?php if ($sanction['approved_at']): ?><div><strong><?= $sanction['status'] === 'rejected' ? 'Rejected' : 'Approved' ?></strong><span class="text-secondary ms-2"><?= e($sanction['approved_by_name'] ?? 'System') ?> · <?= e($sanction['approved_at']) ?></span></div><?php endif; ?>
         <?php if (!$sanction['verified_at'] && !$sanction['approved_at']): ?><span class="text-secondary">No further approval records available.</span><?php endif; ?>
+        <?php foreach (($sanction['approval_history'] ?? []) as $event): ?><div class="mb-2"><strong><?= e(ucfirst($event['action'])) ?></strong><span class="text-secondary ms-2"><?= e($event['user_name'] ?? 'System') ?> · <?= e($event['created_at']) ?></span><?= !empty($event['reason']) ? '<div class="text-danger">Reason: ' . nl2br(e($event['reason'])) . '</div>' : '' ?></div><?php endforeach; ?>
     </div>
 </div>

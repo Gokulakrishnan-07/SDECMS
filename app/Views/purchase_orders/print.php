@@ -40,6 +40,7 @@
         </div>
         <div style="text-align:right">
             <strong>Department:</strong> <?= e($po['department_name']) ?><br>
+            <?php if (!empty($po['work_location_type'])): ?><?php if (!empty($po['maintenance_category'])): ?><strong>Maintenance Category:</strong> <?= e($po['maintenance_category']) ?><br><?php endif; ?><strong>Work Location / Service Area:</strong> <?= e($po['work_location_name'] ?? 'No records available.') ?><br><?php endif; ?>
             <strong>Financial Year:</strong> <?= e($po['financial_year']) ?><br>
             <?php if (!empty($po['pr_no'])): ?><strong>Ref PR:</strong> <?= e($po['pr_no']) ?><br><?php endif; ?>
             <?php if (!empty($po['invoice_no'])): ?><strong>Invoice:</strong> <?= e($po['invoice_no']) ?><br><?php endif; ?>

@@ -13,6 +13,7 @@ USE secms;
 SET FOREIGN_KEY_CHECKS = 0;
 
 DROP TABLE IF EXISTS po_status_history;
+DROP TABLE IF EXISTS approval_history;
 DROP TABLE IF EXISTS po_items;
 DROP TABLE IF EXISTS expenses;
 DROP TABLE IF EXISTS purchase_orders;
@@ -79,6 +80,10 @@ CREATE TABLE departments (
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
 
+-- Maintenance work categories and location are recorded on each transaction.
+-- work_location_id deliberately references the department master so all current
+-- and future departments automatically become selectable work locations.
+
 -- Department sub-units (e.g. Transport → School/College/Trust Transport;
 -- Civil Works → Study Centre / Auditorium / Learning Centre / Conference Hall).
 -- Budget & sanctions stay at department level; units tag requisitions/reports.
@@ -124,6 +129,9 @@ CREATE TABLE users (
 CREATE TABLE budgets (
     id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     department_id     INT UNSIGNED NOT NULL,
+    work_location_type ENUM('department','unit','other') NULL,
+    work_location_id   INT UNSIGNED NULL,
+    other_work_location VARCHAR(255) NULL,
     financial_year_id INT UNSIGNED NOT NULL,
     allocated_amount  DECIMAL(15,2) NOT NULL DEFAULT 0,
     committed_amount  DECIMAL(15,2) NOT NULL DEFAULT 0,   -- reserved by approved sanctions (full workflow), not yet spent
@@ -163,12 +171,19 @@ CREATE TABLE sanctions (
     id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     sanction_no       VARCHAR(30) NOT NULL UNIQUE,        -- e.g. COL-2026-001 (read-only)
     department_id     INT UNSIGNED NOT NULL,
+    maintenance_category ENUM('Civil','Electrical','Plumbing') NULL,
+    work_location_type ENUM('department','unit','other') NULL,
+    work_location_id INT UNSIGNED NULL,
+    other_work_location VARCHAR(255) NULL,
     financial_year_id INT UNSIGNED NOT NULL,
     amount            DECIMAL(15,2) NOT NULL,
     requisitioned_amount DECIMAL(15,2) NOT NULL DEFAULT 0, -- sum of approved requisitions drawn from this sanction
     last_subdivision  SMALLINT UNSIGNED NOT NULL DEFAULT 0, -- 0=none, 1=A … 26=Z, 27=a … 52=z
     purpose           VARCHAR(255) NOT NULL,
     remarks           VARCHAR(500) NULL,
+    reject_reason     VARCHAR(500) NULL,
+    rejected_by       INT UNSIGNED NULL,
+    rejected_at       DATETIME NULL,
     status            ENUM('pending','verified','approved','rejected') NOT NULL DEFAULT 'pending',
     created_by        INT UNSIGNED NULL,
     verified_by       INT UNSIGNED NULL,
@@ -229,6 +244,10 @@ CREATE TABLE purchase_requests (
     subdivision_code  VARCHAR(2) NULL,                   -- A..Z then a..z within the parent sanction
     unit_id           INT UNSIGNED NULL,                 -- department sub-unit (Transport / Civil Works)
     department_id     INT UNSIGNED NOT NULL,
+    maintenance_category ENUM('Civil','Electrical','Plumbing') NULL,
+    work_location_type ENUM('department','unit','other') NULL,
+    work_location_id INT UNSIGNED NULL,
+    other_work_location VARCHAR(255) NULL,
     financial_year_id INT UNSIGNED NOT NULL,
     title             VARCHAR(200) NOT NULL,
     description       TEXT NULL,
@@ -238,6 +257,8 @@ CREATE TABLE purchase_requests (
     attachment_name   VARCHAR(255) NULL,
     remarks           VARCHAR(500) NULL,
     reject_reason     VARCHAR(500) NULL,
+    rejected_by       INT UNSIGNED NULL,
+    rejected_at       DATETIME NULL,
     created_by        INT UNSIGNED NULL,
     approved_by       INT UNSIGNED NULL,
     approved_at       DATETIME NULL,
@@ -249,9 +270,22 @@ CREATE TABLE purchase_requests (
     CONSTRAINT fk_pr_unit       FOREIGN KEY (unit_id) REFERENCES department_units(id) ON DELETE SET NULL,
     CONSTRAINT fk_pr_creator    FOREIGN KEY (created_by)  REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_pr_approver   FOREIGN KEY (approved_by) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_pr_rejector   FOREIGN KEY (rejected_by) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_pr_status (status),
     INDEX idx_pr_sanction (sanction_id),
     INDEX idx_pr_dept_fy (department_id, financial_year_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE approval_history (
+    id           INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    request_type ENUM('sanction','purchase_request') NOT NULL,
+    request_id   INT UNSIGNED NOT NULL,
+    action       VARCHAR(30) NOT NULL,
+    reason       VARCHAR(500) NULL,
+    user_id      INT UNSIGNED NULL,
+    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_approval_history_request (request_type, request_id),
+    CONSTRAINT fk_approval_history_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- ----------------------------------------------------------------------------
@@ -262,6 +296,10 @@ CREATE TABLE purchase_orders (
     po_no               VARCHAR(30) NOT NULL UNIQUE,      -- e.g. PO-2026-001
     purchase_request_id INT UNSIGNED NULL,
     department_id       INT UNSIGNED NOT NULL,
+    maintenance_category ENUM('Civil','Electrical','Plumbing') NULL,
+    work_location_type ENUM('department','unit','other') NULL,
+    work_location_id INT UNSIGNED NULL,
+    other_work_location VARCHAR(255) NULL,
     financial_year_id   INT UNSIGNED NOT NULL,
     vendor_name         VARCHAR(200) NOT NULL,
     vendor_gstin        VARCHAR(20)  NULL,

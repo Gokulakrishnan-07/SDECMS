@@ -42,6 +42,7 @@ $router->get('/audit-logs',        [UserController::class, 'auditPage'],   ['aut
 $router->get('/settings',          [SettingsController::class, 'page'],    ['auth']);
 $router->get('/sanctions/{id}/view', [SanctionController::class, 'viewDetail'], ['auth', 'can:sanctions.view']);
 $router->get('/purchase-requests/{id}/view', [PurchaseRequestController::class, 'viewDetail'], ['auth', 'can:purchase_requests.view']);
+$router->get('/purchase-requests/{id}/print', [PurchaseRequestController::class, 'printView'], ['auth', 'can:purchase_requests.view']);
 $router->get('/purchase-orders/{id}/view', [PurchaseOrderController::class, 'viewDetail'], ['auth', 'can:purchase_orders.view']);
 $router->get('/sanctions/{id}/print', [SanctionController::class, 'printView'], ['auth', 'can:sanctions.view']);
 $router->get('/purchase-orders/{id}/print', [PurchaseOrderController::class, 'printView'], ['auth', 'can:purchase_orders.view']);
@@ -57,6 +58,7 @@ $router->get('/api/dashboard', [DashboardController::class, 'apiStats'], ['auth'
 // Departments
 $router->get('/api/departments', [DepartmentController::class, 'index'], ['auth']);
 $router->get('/api/departments/{id}/units', [DepartmentController::class, 'units'], ['auth']);
+$router->get('/api/work-locations', [DepartmentController::class, 'workLocations'], ['auth']);
 $router->get('/api/departments/{id}/budget-summary', [DepartmentController::class, 'budgetSummary'], ['auth']);
 
 // Budgets  (spec: /api/budget)
@@ -85,6 +87,8 @@ $router->get('/api/purchase-requests/export', [PurchaseRequestController::class,
 $router->get('/api/purchase-requests',        [PurchaseRequestController::class, 'index'],  ['auth', 'can:purchase_requests.view']);
 $router->post('/api/purchase-requests',       [PurchaseRequestController::class, 'store'],  ['auth', 'can:purchase_requests.create']);
 $router->get('/api/purchase-requests/{id}',   [PurchaseRequestController::class, 'show'],   ['auth', 'can:purchase_requests.view']);
+$router->get('/purchase-requests/{id}/attachment/view', [PurchaseRequestController::class, 'viewAttachment'], ['auth', 'can:purchase_requests.view']);
+$router->get('/purchase-requests/{id}/attachment/download', [PurchaseRequestController::class, 'downloadAttachment'], ['auth', 'can:purchase_requests.view']);
 $router->put('/api/purchase-requests/{id}',   [PurchaseRequestController::class, 'update'], ['auth', 'can:purchase_requests.create']);
 $router->delete('/api/purchase-requests/{id}', [PurchaseRequestController::class, 'destroy'], ['auth', 'can:purchase_requests.delete']);
 $router->post('/api/purchase-requests/{id}/submit',  [PurchaseRequestController::class, 'submit'],  ['auth', 'can:purchase_requests.create']);

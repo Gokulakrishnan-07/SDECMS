@@ -109,7 +109,13 @@ class NumberService
     /** @return array{0:string, 1:int} department code and FY year code */
     private static function prefixParts(PDO $pdo, int $departmentId, int $financialYearId): array
     {
-        $stmt = $pdo->prepare('SELECT code FROM departments WHERE id = ?');
+        // Maintenance uses its official MNT prefix for new numbers while
+        // existing historical numbers remain unchanged.
+        $stmt = $pdo->prepare(
+            "SELECT CASE WHEN code = 'MNT' OR name IN ('Civil Department', 'Civil Works', 'Maintenance Department')
+                         THEN 'MNT' ELSE code END AS code
+             FROM departments WHERE id = ?"
+        );
         $stmt->execute([$departmentId]);
         $code = (string) ($stmt->fetch()['code'] ?? 'GEN');
 

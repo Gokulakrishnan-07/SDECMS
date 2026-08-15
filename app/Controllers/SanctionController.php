@@ -18,6 +18,7 @@ use App\Services\AuditService;
 use App\Services\NotificationService;
 use App\Services\NumberService;
 use App\Services\UploadService;
+use App\Services\MaintenanceHierarchy;
 
 class SanctionController extends Controller
 {
@@ -35,7 +36,10 @@ class SanctionController extends Controller
             require BASE_PATH . '/app/Views/errors/404.php';
             return;
         }
-        if (!Auth::canAccessDepartment((int) $sanction['department_id'])) {
+        if (Auth::role() === 'accounts' && $sanction['status'] !== 'approved') {
+            http_response_code(404); require BASE_PATH . '/app/Views/errors/404.php'; return;
+        }
+        if (!Auth::canAccessDepartment((int) $sanction['department_id']) || (Auth::role() === 'accounts' && $sanction['status'] !== 'approved')) {
             http_response_code(403);
             require BASE_PATH . '/app/Views/errors/403.php';
             return;
@@ -64,9 +68,11 @@ class SanctionController extends Controller
             $dept = Auth::departmentId();
         }
 
+        $status = Auth::role() === 'accounts' ? 'approved' : (string) Request::query('status', '');
         $result = (new Sanction())->paginate(
             $p['offset'], $p['perPage'], $p['search'],
-            $fy, $dept, (string) Request::query('status', '')
+            $fy, $dept, $status,
+            (string) Request::query('maintenance_category', ''), (string) Request::query('work_location', '')
         );
 
         Response::paginated($result['items'], $result['total'], $p['page'], $p['perPage']);
@@ -84,11 +90,22 @@ class SanctionController extends Controller
             'amount'            => 'required|numeric|min:1',
             'purpose'           => 'required|max:255',
             'remarks'           => 'max:500',
+            'maintenance_category' => 'in:Civil,Electrical,Plumbing',
+            'work_location' => 'max:30',
+            'other_work_location' => 'max:255',
         ]);
         if ($v->fails()) {
             Response::error('Validation failed.', 422, $v->errors());
         }
         $data = $v->validated();
+        $departmentId = (int) $data['department_id'];
+        $this->validateMaintenanceFields($departmentId, $data['maintenance_category'] ?? null, $data['work_location'] ?? null);
+        $location = MaintenanceHierarchy::isHousekeeping($departmentId)
+            ? MaintenanceHierarchy::resolveForDepartment($departmentId, $data['work_location'] ?? null, $data['other_work_location'] ?? null)
+            : MaintenanceHierarchy::resolve($data['work_location'] ?? null);
+        if (MaintenanceHierarchy::isHousekeeping($departmentId) && $location === null) {
+            Response::error('Housekeeping Work Location / Service Area is required.', 422, ['work_location' => 'Select a location or Others with a description.']);
+        }
 
         // Reject an invalid attachment batch before creating a sanction or
         // consuming a permanent sanction number.
@@ -104,15 +121,18 @@ class SanctionController extends Controller
         }
 
         $sanctionNo = null;
-        $id = Database::transaction(function ($pdo) use ($data, $fy, &$sanctionNo) {
+        $id = Database::transaction(function ($pdo) use ($data, $fy, $location, &$sanctionNo) {
             $sanctionNo = NumberService::nextSanctionNo($pdo, (int) $data['department_id'], (int) $fy['id']);
             $stmt = $pdo->prepare(
-                'INSERT INTO sanctions (sanction_no, department_id, financial_year_id, amount, purpose, remarks, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO sanctions (sanction_no, department_id, maintenance_category, work_location_type, work_location_id, other_work_location, financial_year_id, amount, purpose, remarks, created_by)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $stmt->execute([
                 $sanctionNo,
                 (int) $data['department_id'],
+                $data['maintenance_category'] ?? null,
+                $location['type'] ?? null, $location['id'] ?? null,
+                $location['other'] ?? null,
                 (int) $fy['id'],
                 (float) $data['amount'],
                 $data['purpose'],
@@ -130,6 +150,7 @@ class SanctionController extends Controller
         }
 
         AuditService::log('create', 'sanctions', $id, "Sanction $sanctionNo created");
+        \App\Services\ApprovalHistoryService::add('sanction', $id, 'submitted');
         NotificationService::notifyRoles(
             ['administrator', 'principal'],
             'sanction_new',
@@ -139,6 +160,13 @@ class SanctionController extends Controller
         );
 
         Response::json(['id' => $id, 'sanction_no' => $sanctionNo], 201, 'Sanction created.');
+    }
+
+    private function validateMaintenanceFields(int $departmentId, ?string $category, ?string $locationValue): void
+    {
+        if (!MaintenanceHierarchy::isMaintenance($departmentId)) return;
+        if (!in_array($category, MaintenanceHierarchy::CATEGORIES, true)) Response::error('Maintenance Category is required.', 422, ['maintenance_category' => 'Select Civil, Electrical, or Plumbing.']);
+        if (MaintenanceHierarchy::resolve($locationValue) === null) Response::error('Work Location is required.', 422, ['work_location' => 'Select a valid work location.']);
     }
 
     /**
@@ -151,8 +179,8 @@ class SanctionController extends Controller
         if ($row === null) {
             Response::error('Sanction not found.', 404);
         }
-        if ($row['status'] !== 'pending') {
-            Response::error('Only pending sanctions can be edited.', 422);
+        if (!in_array($row['status'], ['pending', 'rejected'], true)) {
+            Response::error('Only pending or rejected sanctions can be edited.', 422);
         }
 
         $v = Validator::make(Request::all(), [
@@ -169,6 +197,7 @@ class SanctionController extends Controller
             'amount'  => (float) $data['amount'],
             'purpose' => $data['purpose'],
             'remarks' => $data['remarks'] ?? $row['remarks'],
+            'status'  => $row['status'] === 'rejected' ? 'pending' : $row['status'],
         ]);
 
         // ── Additional attachments ──────────────────────────────────
@@ -179,6 +208,7 @@ class SanctionController extends Controller
         }
 
         AuditService::log('update', 'sanctions', (int) $id, 'Sanction ' . $row['sanction_no'] . ' updated');
+        \App\Services\ApprovalHistoryService::add('sanction', (int) $id, $row['status'] === 'rejected' ? 'resubmitted' : 'modified');
         Response::json(null, 200, 'Sanction updated.');
     }
 
@@ -234,6 +264,7 @@ class SanctionController extends Controller
         });
 
         AuditService::log('approve', 'sanctions', (int) $id, "Sanction {$row['sanction_no']} approved");
+        \App\Services\ApprovalHistoryService::add('sanction', (int) $id, 'approved');
         $this->notifyDecision($row, 'approved');
         Response::json(null, 200, 'Sanction approved. Requisitions can now be raised under ' . $row['sanction_no'] . '.');
     }
@@ -243,7 +274,17 @@ class SanctionController extends Controller
      */
     public function reject(string $id): void
     {
-        $this->transition((int) $id, from: ['pending', 'verified'], to: 'rejected', field: 'approved');
+        $reason = trim((string) Request::input('reason', ''));
+        if ($reason === '') Response::error('A rejection reason is required.', 422, ['reason' => 'Enter a clear rejection reason.']);
+        $model = new Sanction();
+        $row = $model->find((int) $id);
+        if ($row === null) Response::error('Sanction not found.', 404);
+        if (!in_array($row['status'], ['pending', 'verified'], true)) Response::error("Cannot reject a {$row['status']} sanction.", 422);
+        $model->update((int) $id, ['status' => 'rejected', 'rejected_by' => Auth::id(), 'rejected_at' => date('Y-m-d H:i:s'), 'reject_reason' => substr($reason, 0, 500)]);
+        AuditService::log('reject', 'sanctions', (int) $id, "Sanction {$row['sanction_no']} rejected");
+        \App\Services\ApprovalHistoryService::add('sanction', (int) $id, 'rejected', $reason);
+        $this->notifyDecision($row, 'rejected', $reason);
+        Response::json(null, 200, 'Sanction rejected.');
     }
 
     private function transition(int $id, array $from, string $to, string $field): void
@@ -264,18 +305,23 @@ class SanctionController extends Controller
         ]);
 
         AuditService::log($to === 'rejected' ? 'reject' : 'approve', 'sanctions', $id, "Sanction {$row['sanction_no']} $to");
+        \App\Services\ApprovalHistoryService::add('sanction', $id, $to);
         $this->notifyDecision($row, $to);
         Response::json(null, 200, 'Sanction ' . $to . '.');
     }
 
-    private function notifyDecision(array $row, string $to): void
+    private function notifyDecision(array $row, string $to, ?string $reason = null): void
     {
+        $department = (new \App\Models\Department())->find((int) $row['department_id']);
+        $departmentName = $department['name'] ?? 'Unknown department';
+        $actor = Auth::user()['name'] ?? 'System';
+        $when = date('Y-m-d H:i:s');
         $creator = $row['created_by'] !== null ? [(int) $row['created_by']] : [];
         NotificationService::notifyUsers(
             $creator,
             'sanction_' . $to,
             'Sanction ' . ucfirst($to),
-            "Sanction {$row['sanction_no']} has been $to.",
+            "Sanction {$row['sanction_no']} has been $to." . ($reason ? " Reason: $reason" : ''),
             '/sanctions'
         );
         NotificationService::notifyDepartmentHeads(
@@ -285,6 +331,15 @@ class SanctionController extends Controller
             "Sanction {$row['sanction_no']} has been $to.",
             '/sanctions'
         );
+        if ($to === 'approved') {
+            NotificationService::notifyRoles(
+                ['accounts'],
+                'accounts_forwarded',
+                'Sanction approved for Accounts',
+                "Sanction {$row['sanction_no']} | Department: {$departmentName} | Amount: " . number_format((float) $row['amount'], 2) . " | Approved by: {$actor} | {$when}",
+                '/sanctions/' . (int) $row['id'] . '/view'
+            );
+        }
     }
 
     /** Open a safe preview for PDFs/images; other allowed files download. */
@@ -306,7 +361,7 @@ class SanctionController extends Controller
             http_response_code(404);
             exit('Sanction not found.');
         }
-        if (!Auth::canAccessDepartment((int) $sanction['department_id'])) {
+        if (!Auth::canAccessDepartment((int) $sanction['department_id']) || (Auth::role() === 'accounts' && $sanction['status'] !== 'approved')) {
             http_response_code(403);
             exit('Forbidden.');
         }
@@ -317,18 +372,26 @@ class SanctionController extends Controller
             exit('Attachment not found.');
         }
 
-        $fullPath = rtrim(config('uploads.path'), '/\\') . DIRECTORY_SEPARATOR
-                  . str_replace('/', DIRECTORY_SEPARATOR, $att['file_path']);
-        if (!is_file($fullPath)) {
+        $root = realpath(rtrim(config('uploads.path'), '/\\'));
+        $fullPath = $root === false ? false : realpath($root . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $att['file_path']));
+        if ($root === false || $fullPath === false || !str_starts_with($fullPath, $root . DIRECTORY_SEPARATOR) || !is_file($fullPath)) {
             http_response_code(404);
             exit('File not found on disk.');
         }
 
-        $previewable = in_array($att['mime_type'], ['application/pdf', 'image/png', 'image/jpeg'], true);
+        $mime = (new \finfo(FILEINFO_MIME_TYPE))->file($fullPath) ?: (string) $att['mime_type'];
+        $extension = strtolower((string) ($att['file_extension'] ?: pathinfo($att['original_filename'], PATHINFO_EXTENSION)));
+        $mime = self::normaliseAttachmentMime($mime, $extension);
+        $previewable = in_array($mime, ['application/pdf', 'image/png', 'image/jpeg'], true);
         $disposition = (!$forceDownload && $previewable) ? 'inline' : 'attachment';
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
         header('X-Content-Type-Options: nosniff');
-        header('Content-Type: ' . $att['mime_type']);
-        header('Content-Disposition: ' . $disposition . '; filename="' . self::downloadFilename($att['original_filename']) . '"');
+        header('Content-Type: ' . $mime);
+        header('Content-Transfer-Encoding: binary');
+        header('Content-Disposition: ' . $disposition . '; filename="' . self::downloadFilename($att['original_filename']) . '"; filename*=UTF-8\'\'' . rawurlencode($att['original_filename']));
+        header('Accept-Ranges: bytes');
         header('Content-Length: ' . filesize($fullPath));
         header('Cache-Control: private, max-age=3600');
         readfile($fullPath);
@@ -338,6 +401,22 @@ class SanctionController extends Controller
     private static function downloadFilename(string $name): string
     {
         return str_replace(['"', "\r", "\n"], '_', basename($name));
+    }
+
+    private static function normaliseAttachmentMime(string $mime, string $extension): string
+    {
+        if (in_array($extension, ['jpg', 'jpeg'], true)) {
+            return 'image/jpeg';
+        }
+        if ($extension === 'png') {
+            return 'image/png';
+        }
+        $fallbacks = [
+            'pdf' => 'application/pdf', 'png' => 'image/png', 'jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg',
+            'doc' => 'application/msword', 'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        ];
+        return ($mime === 'application/octet-stream' || $mime === '') && isset($fallbacks[$extension])
+            ? $fallbacks[$extension] : $mime;
     }
 
     /**
@@ -389,7 +468,7 @@ class SanctionController extends Controller
      */
     private function saveAttachments(int $sanctionId): void
     {
-        if (empty($_FILES['attachments']['name'][0])) {
+        if (empty($_FILES['attachments']['name']) || !array_filter($_FILES['attachments']['name'])) {
             return;
         }
 
@@ -446,7 +525,7 @@ class SanctionController extends Controller
     /** Validate each populated multi-file field without persisting anything. */
     private function validateAttachments(): void
     {
-        if (empty($_FILES['attachments']['name'][0])) {
+        if (empty($_FILES['attachments']['name']) || !array_filter($_FILES['attachments']['name'])) {
             return;
         }
         $files = $_FILES['attachments'];
@@ -478,6 +557,7 @@ class SanctionController extends Controller
             http_response_code(403);
             exit('Forbidden.');
         }
+        if (Auth::role() === 'accounts' && $row['status'] !== 'approved') { http_response_code(404); exit('Sanction not found.'); }
         $this->view('sanctions.print', ['sanction' => $row], '');
     }
 
@@ -488,11 +568,13 @@ class SanctionController extends Controller
     {
         $fy   = Request::query('financial_year_id') ? (int) Request::query('financial_year_id') : null;
         $dept = Auth::role() === 'department_head' ? Auth::departmentId() : null;
-        $rows = (new Sanction())->paginate(0, 10000, '', $fy, $dept)['items'];
+        $model = new Sanction();
+        $single = Request::query('id') ? $model->findWithRelations((int) Request::query('id')) : null;
+        $rows = $single ? [$single] : $model->paginate(0, 10000, '', $fy, $dept, Auth::role() === 'accounts' ? 'approved' : '')['items'];
 
-        $headers = ['Sanction No', 'Department', 'Financial Year', 'Amount', 'Purpose', 'Status', 'Created By', 'Created At'];
+        $headers = ['Sanction No', 'Department', 'Maintenance Category', 'Work Location / Service Area', 'Other Work Location', 'Financial Year', 'Amount', 'Purpose', 'Status', 'Created By', 'Created At'];
         $data    = array_map(static fn ($r) => [
-            $r['sanction_no'], $r['department_name'], $r['financial_year'],
+            $r['sanction_no'], $r['department_name'], $r['maintenance_category'] ?? '', $r['work_location_name'] ?? '', $r['other_work_location'] ?? '', $r['financial_year'],
             $r['amount'], $r['purpose'], $r['status'], $r['created_by_name'], $r['created_at'],
         ], $rows);
 

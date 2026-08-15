@@ -3,7 +3,7 @@
 -- Creates only what the system needs to function:
 --   • the current financial year (2026-27, active)
 --   • the institutional departments (system structure, not demo data)
---   • department sub-units for Transport and Civil Works
+--   • department sub-units for Transport and Maintenance Department
 --   • ONE administrator account
 --   • basic system settings
 --
@@ -23,6 +23,11 @@ USE secms;
 INSERT INTO financial_years (label, year_code, start_date, end_date, is_active) VALUES
 ('2026-27', 2026, '2026-04-01', '2027-03-31', 1);
 
+INSERT INTO financial_year_periods (financial_year_id, name, sort_order)
+SELECT id, q.name, q.sort_order FROM financial_years fy
+JOIN (SELECT 'Q1' name, 0 sort_order UNION ALL SELECT 'Q2', 1 UNION ALL SELECT 'Q3', 2 UNION ALL SELECT 'Q4', 3) q
+WHERE fy.label = '2026-27';
+
 -- Departments (code = sanction number prefix) --------------------------------
 -- workflow_type: 'full' = School/College procurement (sanction commits budget,
 --   requisition draws sanction balance, PO payment books expense);
@@ -40,12 +45,11 @@ INSERT INTO departments (name, code, icon, workflow_type, has_units) VALUES
 ('Temple',                  'TMP', 'fa-gopuram',             'simple', 0),
 ('Goshala',                 'GOS', 'fa-cow',                 'simple', 0),
 ('Padasala',                'PAD', 'fa-book-open-reader',    'simple', 0),
-('Electrical & Plumbing',   'ELP', 'fa-bolt',                'simple', 0),
 ('Housekeeping',            'HKP', 'fa-broom',               'simple', 0),
 ('Gardening',               'GRD', 'fa-seedling',            'simple', 0),
 ('Village Welfare',         'VLW', 'fa-hand-holding-heart',  'simple', 0),
 ('Camp',                    'CMP', 'fa-campground',          'simple', 0),
-('Civil Works',             'CVL', 'fa-helmet-safety',       'simple', 1),
+('Maintenance Department',  'MNT', 'fa-helmet-safety',       'simple', 1),
 ('Miscellaneous',           'MSC', 'fa-layer-group',         'simple', 0);
 
 -- Department sub-units --------------------------------------------------------
@@ -55,13 +59,13 @@ INSERT INTO department_units (department_id, unit_code, unit_name) VALUES
 ((SELECT id FROM departments WHERE code = 'TRN'), 'COL-TRN', 'College Transport'),
 ((SELECT id FROM departments WHERE code = 'TRN'), 'TRT-TRN', 'Trust Transport');
 
--- Civil Works → Study Centre / Auditorium / Learning Centre / Conference Hall
--- (these were previously separate departments, now units under Civil Works).
+-- Maintenance Department → Study Centre / Auditorium / Learning Centre / Conference Hall
+-- (these were previously separate departments, now units under Maintenance).
 INSERT INTO department_units (department_id, unit_code, unit_name) VALUES
-((SELECT id FROM departments WHERE code = 'CVL'), 'STC-CVL', 'Study Centre'),
-((SELECT id FROM departments WHERE code = 'CVL'), 'AUD-CVL', 'Auditorium'),
-((SELECT id FROM departments WHERE code = 'CVL'), 'LRC-CVL', 'Learning Centre'),
-((SELECT id FROM departments WHERE code = 'CVL'), 'CNF-CVL', 'Conference Hall');
+((SELECT id FROM departments WHERE code = 'MNT'), 'STC-MNT', 'Study Centre'),
+((SELECT id FROM departments WHERE code = 'MNT'), 'AUD-MNT', 'Auditorium'),
+((SELECT id FROM departments WHERE code = 'MNT'), 'LRC-MNT', 'Learning Centre'),
+((SELECT id FROM departments WHERE code = 'MNT'), 'CNF-MNT', 'Conference Hall');
 
 -- The one and only administrator account --------------------------------------
 -- Password: Admin@123 (bcrypt) — CHANGE AFTER FIRST LOGIN.

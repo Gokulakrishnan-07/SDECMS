@@ -69,6 +69,14 @@
                         <label class="form-label">Department</label>
                         <select class="form-select" id="bDept" required></select>
                     </div>
+                    <div class="col-md-6" id="grpHousekeepingLocation" style="display:none">
+                        <label class="form-label">Work Location / Service Area</label>
+                        <select class="form-select" id="bWorkLocation"><option value="">— Select location —</option></select>
+                    </div>
+                    <div class="col-12" id="grpHousekeepingOther" style="display:none">
+                        <label class="form-label">Other Work Location / Service Area</label>
+                        <input type="text" class="form-control" id="bOtherWorkLocation" maxlength="255">
+                    </div>
                     <div class="col-md-6">
                         <label class="form-label">Financial Year</label>
                         <input type="text" class="form-control" id="bFyLabel" readonly>
@@ -108,9 +116,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     App.bindAmountWords('#bAmount', '#bAmountWords');
 
     // Global active financial year — no manual FY selection anywhere.
-    const [fys, depts] = await Promise.all([
+    const [fys, depts, locations] = await Promise.all([
         App.api('/api/financial-years').then(r => r.data),
         App.api('/api/departments').then(r => r.data),
+        App.api('/api/work-locations').then(r => r.data),
     ]);
     const activeFy = fys.find(fy => fy.is_active == 1) || fys[0];
     document.getElementById('activeFyLabel').textContent = activeFy ? activeFy.label : '—';
@@ -123,6 +132,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const bDept = document.getElementById('bDept');
     depts.forEach(d => bDept.add(new Option(d.name, d.id)));
+    const bWorkLocation = document.getElementById('bWorkLocation');
+    locations.forEach(l => bWorkLocation.add(new Option(l.label, l.value)));
+    bWorkLocation.add(new Option('Others', 'other'));
+    function toggleHousekeepingLocation() {
+        const isHkp = (depts.find(d => String(d.id) === String(bDept.value)) || {}).code === 'HKP';
+        document.getElementById('grpHousekeepingLocation').style.display = isHkp ? '' : 'none';
+        document.getElementById('grpHousekeepingOther').style.display = isHkp && bWorkLocation.value === 'other' ? '' : 'none';
+        bWorkLocation.required = isHkp;
+        document.getElementById('bOtherWorkLocation').required = isHkp && bWorkLocation.value === 'other';
+        if (!isHkp) { bWorkLocation.value = ''; document.getElementById('bOtherWorkLocation').value = ''; }
+    }
+    bDept.addEventListener('change', toggleHousekeepingLocation);
+    bWorkLocation.addEventListener('change', toggleHousekeepingLocation);
 
     // Load any periods defined for the active FY (for optional per-period allocation).
     let periods = [];
@@ -137,8 +159,22 @@ document.addEventListener('DOMContentLoaded', async () => {
         wrap.innerHTML = periods.map(p => `
             <div class="col-md-6 col-lg-3">
                 <label class="form-label small">${App.esc(p.name)}</label>
-                <input type="number" class="form-control period-input" data-period="${p.id}" min="0" step="0.01" value="${values[p.id] || ''}">
+            <input type="number" class="form-control period-input" data-period="${p.id}" min="0" step="0.01" value="${values[p.id] ?? ''}">
+            <div class="words-preview period-words" data-period-words="${p.id}"></div>
             </div>`).join('');
+        wrap.querySelectorAll('.period-input').forEach(i => {
+            App.bindAmountWords(i, wrap.querySelector(`[data-period-words="${i.dataset.period}"]`));
+            i.addEventListener('input', updateQuarterTotal);
+        });
+        updateQuarterTotal();
+    }
+    function updateQuarterTotal() {
+        const inputs = [...document.querySelectorAll('.period-input')];
+        if (inputs.some(input => input.value.trim() !== '')) {
+            document.getElementById('bAmount').value = inputs
+                .reduce((sum, input) => sum + Math.max(0, parseFloat(input.value || 0)), 0).toFixed(2);
+            document.getElementById('bAmount').dispatchEvent(new Event('input'));
+        }
     }
 
     async function load() {
@@ -154,7 +190,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         tbody.innerHTML = rows.map(r => `
             <tr>
                 <td><i class="fa-solid ${App.esc(r.department_icon)} me-2 text-secondary"></i><strong>${App.esc(r.department_name)}</strong>
-                    ${r.workflow_type === 'full' ? '<span class="badge-soft verified ms-1" title="Full procurement workflow">Full</span>' : ''}</td>
+                    ${r.workflow_type === 'full' ? '<span class="badge-soft verified ms-1" title="Full procurement workflow">Full</span>' : ''}
+                    ${r.work_location_name ? `<div class="small text-secondary">${App.esc(r.work_location_name)}</div>` : ''}</td>
                 <td>${App.money(r.allocated_amount)}</td>
                 <td>${App.money(r.committed_amount)}</td>
                 <td>${App.money(r.used_amount)}</td>
@@ -194,7 +231,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('bAmount').value = row.allocated_amount;
             document.getElementById('bAmount').dispatchEvent(new Event('input'));
             document.getElementById('bRemarks').value = row.remarks || '';
-            renderPeriodInputs();
+            document.getElementById('bDept').value = row.department_id;
+            document.getElementById('bWorkLocation').value = row.work_location_type === 'other' ? 'other' : (row.work_location_type ? row.work_location_type + ':' + row.work_location_id : '');
+            document.getElementById('bOtherWorkLocation').value = row.other_work_location || '';
+            toggleHousekeepingLocation();
+            const periodValues = Object.fromEntries((row.periods || []).map(p => [p.period_id, p.allocated_amount]));
+            renderPeriodInputs(periodValues);
             modal.show();
         } else if (btn.classList.contains('act-approve') || btn.classList.contains('act-reject')) {
             const decision = btn.classList.contains('act-approve') ? 'approved' : 'rejected';
@@ -220,6 +262,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('grpDept').style.display = '';
         document.getElementById('budgetForm').reset();
         document.getElementById('bFyLabel').value = activeFy ? 'FY ' + activeFy.label : '';
+        document.getElementById('bWorkLocation').value = '';
+        document.getElementById('bOtherWorkLocation').value = '';
+        toggleHousekeepingLocation();
         document.getElementById('bAmountWords').textContent = '';
         renderPeriodInputs();
     });
@@ -229,19 +274,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         const body = {
             allocated_amount: document.getElementById('bAmount').value,
             remarks: document.getElementById('bRemarks').value,
+            work_location: document.getElementById('bWorkLocation').value,
+            other_work_location: document.getElementById('bOtherWorkLocation').value,
         };
         // Optional per-period breakdown.
         const periodVals = [...document.querySelectorAll('.period-input')]
             .map(i => ({ period_id: parseInt(i.dataset.period), allocated_amount: parseFloat(i.value || 0) }))
             .filter(p => p.allocated_amount > 0);
-        if (periodVals.length) {
-            const sum = periodVals.reduce((s, p) => s + p.allocated_amount, 0);
-            if (sum > parseFloat(body.allocated_amount || 0) + 0.001) {
-                App.toast('error', 'Period allocations (' + App.money(sum) + ') exceed the allocated amount');
-                return;
-            }
-            body.periods = periodVals;
-        }
+        if (periodVals.length) body.periods = periodVals;
         try {
             if (editing) {
                 await App.api('/api/budget/' + editing, { method: 'PUT', body });

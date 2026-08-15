@@ -27,10 +27,10 @@ class Auth
         ],
         'accounts' => [
             'dashboard.view', 'departments.view_all',
-            'budgets.view', 'budgets.manage',
-            'sanctions.view', 'sanctions.create', 'sanctions.verify',
+            'budgets.view',
+            'sanctions.view',
             'purchase_requests.view',
-            'purchase_orders.view', 'purchase_orders.manage',
+            'purchase_orders.view',
             'reports.view', 'reports.export', 'notifications.view',
         ],
         'department_head' => [

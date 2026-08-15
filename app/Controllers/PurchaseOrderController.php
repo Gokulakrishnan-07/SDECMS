@@ -17,6 +17,7 @@ use App\Models\PurchaseRequest;
 use App\Services\AuditService;
 use App\Services\NotificationService;
 use App\Services\NumberService;
+use App\Services\MaintenanceHierarchy;
 
 class PurchaseOrderController extends Controller
 {
@@ -35,6 +36,9 @@ class PurchaseOrderController extends Controller
             http_response_code(404);
             require BASE_PATH . '/app/Views/errors/404.php';
             return;
+        }
+        if (Auth::role() === 'accounts' && !in_array($order['status'], ['issued', 'received', 'paid'], true)) {
+            http_response_code(404); require BASE_PATH . '/app/Views/errors/404.php'; return;
         }
         if (!Auth::canAccessDepartment((int) $order['department_id'])) {
             http_response_code(403);
@@ -63,9 +67,11 @@ class PurchaseOrderController extends Controller
             $dept = Auth::departmentId();
         }
 
+        $status = Auth::role() === 'accounts' ? 'finalized' : (string) Request::query('status', '');
         $result = (new PurchaseOrder())->paginate(
             $p['offset'], $p['perPage'], $p['search'],
-            $fy, $dept, (string) Request::query('status', '')
+            $fy, $dept, $status,
+            (string) Request::query('maintenance_category', ''), (string) Request::query('work_location', '')
         );
 
         Response::paginated($result['items'], $result['total'], $p['page'], $p['perPage']);
@@ -102,6 +108,9 @@ class PurchaseOrderController extends Controller
             'gst_percent'         => 'numeric|min:0|max:100',
             'invoice_no'          => 'max:50',
             'remarks'             => 'max:500',
+            'maintenance_category' => 'in:Civil,Electrical,Plumbing',
+            'work_location'        => 'max:30',
+            'other_work_location'  => 'max:255',
         ]);
         if ($v->fails()) {
             Response::error('Validation failed.', 422, $v->errors());
@@ -115,12 +124,24 @@ class PurchaseOrderController extends Controller
         }
 
         // Optional link to an approved purchase request
+        $linkedHierarchy = null;
         if (!empty($data['purchase_request_id'])) {
             $pr = (new PurchaseRequest())->find((int) $data['purchase_request_id']);
             if ($pr === null || $pr['status'] !== 'approved') {
                 Response::error('Purchase orders can only be linked to approved purchase requests.', 422);
             }
+            if ((int) $pr['department_id'] !== (int) $data['department_id']) Response::error('The purchase request department does not match the purchase order.', 422);
+            $linkedHierarchy = $pr;
         }
+        $category = $linkedHierarchy['maintenance_category'] ?? ($data['maintenance_category'] ?? null);
+        $locationValue = $data['work_location'] ?? null;
+        $location = $linkedHierarchy && ($linkedHierarchy['work_location_type'] ?? null) === 'other'
+            ? ['type' => 'other', 'id' => null, 'other' => $linkedHierarchy['other_work_location'] ?? null]
+            : ($linkedHierarchy && $linkedHierarchy['work_location_id'] ? ['type' => $linkedHierarchy['work_location_type'], 'id' => (int) $linkedHierarchy['work_location_id'], 'other' => null] : (MaintenanceHierarchy::isMaintenance((int) $data['department_id']) || MaintenanceHierarchy::isHousekeeping((int) $data['department_id'])
+                ? MaintenanceHierarchy::resolveForDepartment((int) $data['department_id'], $locationValue, $data['other_work_location'] ?? null)
+                : null));
+        if (MaintenanceHierarchy::isMaintenance((int) $data['department_id']) && (!in_array($category, MaintenanceHierarchy::CATEGORIES, true) || $location === null)) Response::error('Maintenance Category and Work Location are required.', 422);
+        if (MaintenanceHierarchy::isHousekeeping((int) $data['department_id']) && ($location === null || (($location['type'] ?? null) === 'other' && trim((string) ($location['other'] ?? '')) === ''))) Response::error('Housekeeping Work Location / Service Area is required.', 422);
 
         $subtotal   = array_sum(array_map(
             static fn ($i) => (float) ($i['quantity'] ?? 1) * (float) ($i['unit_price'] ?? 0),
@@ -130,18 +151,19 @@ class PurchaseOrderController extends Controller
         $gstAmount  = round($subtotal * $gstPercent / 100, 2);
 
         $poNo = null;
-        $id = Database::transaction(function ($pdo) use ($data, $fy, $items, $subtotal, $gstPercent, $gstAmount, &$poNo) {
+        $id = Database::transaction(function ($pdo) use ($data, $fy, $items, $subtotal, $gstPercent, $gstAmount, $category, $location, &$poNo) {
             $poNo = NumberService::nextPoNo((int) $fy['id']);
             $stmt = $pdo->prepare(
                 'INSERT INTO purchase_orders
-                    (po_no, purchase_request_id, department_id, financial_year_id, vendor_name, vendor_gstin,
+                    (po_no, purchase_request_id, department_id, maintenance_category, work_location_type, work_location_id, other_work_location, financial_year_id, vendor_name, vendor_gstin,
                      vendor_address, subtotal, gst_percent, gst_amount, total_amount, invoice_no, remarks, created_by)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
             );
             $stmt->execute([
                 $poNo,
                 !empty($data['purchase_request_id']) ? (int) $data['purchase_request_id'] : null,
                 (int) $data['department_id'],
+                $category, $location['type'] ?? null, $location['id'] ?? null, $location['other'] ?? null,
                 (int) $fy['id'],
                 $data['vendor_name'],
                 $data['vendor_gstin'] ?? null,
@@ -187,12 +209,19 @@ class PurchaseOrderController extends Controller
             'gst_percent'    => 'numeric|min:0|max:100',
             'invoice_no'     => 'max:50',
             'remarks'        => 'max:500',
+            'work_location' => 'max:30',
+            'other_work_location' => 'max:255',
         ]);
         if ($v->fails()) {
             Response::error('Validation failed.', 422, $v->errors());
         }
         $data  = $v->validated();
         $items = $this->validItems();
+        $locationUpdate = null;
+        if (MaintenanceHierarchy::isHousekeeping((int) $row['department_id']) && (array_key_exists('work_location', Request::all()) || array_key_exists('other_work_location', Request::all()))) {
+            $locationUpdate = MaintenanceHierarchy::resolveForDepartment((int) $row['department_id'], $data['work_location'] ?? null, $data['other_work_location'] ?? null);
+            if ($locationUpdate === null) Response::error('Housekeeping Work Location / Service Area is required.', 422);
+        }
 
         $subtotal   = array_sum(array_map(
             static fn ($i) => (float) ($i['quantity'] ?? 1) * (float) ($i['unit_price'] ?? 0),
@@ -201,7 +230,7 @@ class PurchaseOrderController extends Controller
         $gstPercent = (float) ($data['gst_percent'] ?? 0);
         $gstAmount  = round($subtotal * $gstPercent / 100, 2);
 
-        Database::transaction(function ($pdo) use ($id, $data, $items, $subtotal, $gstPercent, $gstAmount, $po) {
+        Database::transaction(function ($pdo) use ($id, $data, $items, $subtotal, $gstPercent, $gstAmount, $po, $locationUpdate) {
             $stmt = $pdo->prepare(
                 'UPDATE purchase_orders SET vendor_name = ?, vendor_gstin = ?, vendor_address = ?,
                         subtotal = ?, gst_percent = ?, gst_amount = ?, total_amount = ?, invoice_no = ?, remarks = ?
@@ -219,6 +248,10 @@ class PurchaseOrderController extends Controller
                 $data['remarks'] ?? null,
                 (int) $id,
             ]);
+            if ($locationUpdate !== null) {
+                $pdo->prepare('UPDATE purchase_orders SET work_location_type = ?, work_location_id = ?, other_work_location = ? WHERE id = ?')
+                    ->execute([$locationUpdate['type'], $locationUpdate['id'], $locationUpdate['other'], (int) $id]);
+            }
             $po->replaceItems($pdo, (int) $id, $items);
         });
 
@@ -293,6 +326,19 @@ class PurchaseOrderController extends Controller
 
         AuditService::log('status', 'purchase_orders', (int) $id, "Purchase order {$row['po_no']} → $status");
 
+        if ($status === 'issued') {
+            $department = (new \App\Models\Department())->find((int) $row['department_id']);
+            $departmentName = $department['name'] ?? 'Unknown department';
+            $actor = Auth::user()['name'] ?? 'System';
+            NotificationService::notifyRoles(
+                ['accounts'],
+                'accounts_forwarded',
+                'Purchase Order finalized for Accounts',
+                "Purchase Order {$row['po_no']} | Department: {$departmentName} | Amount: " . number_format((float) $row['total_amount'], 2) . " | Finalized by: {$actor} | " . date('Y-m-d H:i:s'),
+                '/purchase-orders/' . (int) $id . '/view'
+            );
+        }
+
         if ($status === 'paid' && $isFull) {
             $this->alertIfBudgetLow((int) $row['department_id'], (int) $row['financial_year_id']);
         }
@@ -333,6 +379,7 @@ class PurchaseOrderController extends Controller
             http_response_code(403);
             exit('Forbidden.');
         }
+        if (Auth::role() === 'accounts' && !in_array($row['status'], ['issued', 'received', 'paid'], true)) { http_response_code(404); exit('Purchase order not found.'); }
         $this->view('purchase_orders.print', ['po' => $row], '');
     }
 
@@ -342,11 +389,13 @@ class PurchaseOrderController extends Controller
     public function export(): void
     {
         $dept = Auth::role() === 'department_head' ? Auth::departmentId() : null;
-        $rows = (new PurchaseOrder())->paginate(0, 10000, '', null, $dept)['items'];
+        $model = new PurchaseOrder();
+        $single = Request::query('id') ? $model->findWithRelations((int) Request::query('id')) : null;
+        $rows = $single ? [$single] : $model->paginate(0, 10000, '', null, $dept, Auth::role() === 'accounts' ? 'finalized' : '')['items'];
 
-        $headers = ['PO No', 'Department', 'Vendor', 'Subtotal', 'GST %', 'GST Amount', 'Total', 'Invoice', 'Status', 'Created At'];
+        $headers = ['PO No', 'Department', 'Maintenance Category', 'Work Location / Service Area', 'Other Work Location', 'Vendor', 'Subtotal', 'GST %', 'GST Amount', 'Total', 'Invoice', 'Status', 'Created At'];
         $data    = array_map(static fn ($r) => [
-            $r['po_no'], $r['department_name'], $r['vendor_name'],
+            $r['po_no'], $r['department_name'], $r['maintenance_category'] ?? '', $r['work_location_name'] ?? '', $r['other_work_location'] ?? '', $r['vendor_name'],
             $r['subtotal'], $r['gst_percent'], $r['gst_amount'], $r['total_amount'],
             $r['invoice_no'], $r['status'], $r['created_at'],
         ], $rows);

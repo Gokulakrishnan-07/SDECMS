@@ -39,6 +39,7 @@
             <label class="form-label">Department</label>
             <select class="form-select form-select-sm" id="rDept"><option value="">All Departments</option></select>
         </div>
+        <div class="col-6 col-md-4"><label class="form-label">Maintenance Category</label><select class="form-select form-select-sm" id="rMaintenanceCategory"><option value="">All Categories</option><option>Civil</option><option>Electrical</option><option>Plumbing</option></select></div>
     </div>
 </div>
 
@@ -81,6 +82,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             ...extra,
         });
         if (rDept.value) q.set('department_id', rDept.value);
+        if (document.getElementById('rMaintenanceCategory').value) q.set('maintenance_category', document.getElementById('rMaintenanceCategory').value);
         return q;
     }
 
@@ -142,7 +144,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    ['rType', 'rFy', 'rDept'].forEach(id => document.getElementById(id).addEventListener('change', load));
+    ['rType', 'rFy', 'rDept', 'rMaintenanceCategory'].forEach(id => document.getElementById(id).addEventListener('change', load));
     document.getElementById('expCsv').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/reports/export?' + currentQuery({ format: 'csv' }); });
     document.getElementById('expExcel').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/reports/export?' + currentQuery({ format: 'excel' }); });
 

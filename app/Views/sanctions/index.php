@@ -37,6 +37,8 @@ $newSanctionLabel = $isDepartmentHead
 <div class="glass-card table-card">
     <div class="row g-2 mb-3">
         <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fDept"><option value="">All Departments</option></select></div>
+        <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fMaintenanceCategory"><option value="">All Maintenance Categories</option><option>Civil</option><option>Electrical</option><option>Plumbing</option></select></div>
+        <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fWorkLocation"><option value="">All Work Locations</option></select></div>
         <div class="col-6 col-md-3">
             <select class="form-select form-select-sm" id="fStatus">
                 <option value="">All Statuses</option>
@@ -77,6 +79,19 @@ $newSanctionLabel = $isDepartmentHead
                     <div class="col-md-6" id="grpDept">
                         <label class="form-label">Department</label>
                         <select class="form-select" id="sDept" required></select>
+                    </div>
+                    <div class="col-md-6" id="grpMaintenanceCategory" style="display:none">
+                        <label class="form-label">Maintenance Category</label>
+                        <select class="form-select" id="sMaintenanceCategory"><option value="">— Select category —</option><option>Civil</option><option>Electrical</option><option>Plumbing</option></select>
+                    </div>
+                    <div class="col-md-6" id="grpWorkLocation" style="display:none">
+                        <label class="form-label">Work Location</label><select class="form-select" id="sWorkLocation"><option value="">— Select work location —</option></select>
+                    </div>
+                    <div class="col-md-6" id="grpHousekeepingWorkLocation" style="display:none">
+                        <label class="form-label">Work Location / Service Area</label><select class="form-select" id="sHousekeepingWorkLocation"><option value="">— Select location —</option></select>
+                    </div>
+                    <div class="col-12" id="grpHousekeepingOther" style="display:none">
+                        <label class="form-label">Other Work Location / Service Area</label><input type="text" class="form-control" id="sOtherWorkLocation" maxlength="255">
                     </div>
                     <div class="col-12">
                         <div class="budget-panel is-empty" id="budgetPanel">
@@ -128,13 +143,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     App.bindAmountWords('#sAmount', '#sAmountWords');
 
     const depts = (await App.api('/api/departments')).data;
+    const locations = (await App.api('/api/work-locations')).data;
+    locations.forEach(l => document.getElementById('fWorkLocation').add(new Option(l.label, l.value)));
+    document.getElementById('fWorkLocation').add(new Option('Others', 'other'));
     const fDept = document.getElementById('fDept');
     depts.forEach(d => fDept.add(new Option(d.name, d.id)));
     const sDept = document.getElementById('sDept');
     depts.forEach(d => sDept.add(new Option(d.name + ' (' + d.code + ')', d.id)));
+    locations.forEach(l => document.getElementById('sWorkLocation').add(new Option(l.label, l.value)));
+    const sHousekeepingLocation = document.getElementById('sHousekeepingWorkLocation');
+    locations.forEach(l => sHousekeepingLocation.add(new Option(l.label, l.value)));
+    sHousekeepingLocation.add(new Option('Others', 'other'));
+
+    function maintenanceFields() {
+        const on = (depts.find(d => String(d.id) === String(sDept.value)) || {}).code === 'MNT';
+        document.getElementById('grpMaintenanceCategory').style.display = on ? '' : 'none';
+        document.getElementById('grpWorkLocation').style.display = on ? '' : 'none';
+        document.getElementById('sMaintenanceCategory').required = on;
+        document.getElementById('sWorkLocation').required = on;
+        if (!on) { document.getElementById('sMaintenanceCategory').value = ''; document.getElementById('sWorkLocation').value = ''; }
+    }
+    function housekeepingFields() {
+        const on = (depts.find(d => String(d.id) === String(sDept.value)) || {}).code === 'HKP';
+        document.getElementById('grpHousekeepingWorkLocation').style.display = on ? '' : 'none';
+        document.getElementById('grpHousekeepingOther').style.display = on && sHousekeepingLocation.value === 'other' ? '' : 'none';
+        sHousekeepingLocation.required = on;
+        document.getElementById('sOtherWorkLocation').required = on && sHousekeepingLocation.value === 'other';
+        if (!on) { sHousekeepingLocation.value = ''; document.getElementById('sOtherWorkLocation').value = ''; }
+    }
 
     async function onDeptChange() {
         const id = sDept.value;
+        maintenanceFields();
+        housekeepingFields();
         const panel = document.getElementById('budgetPanel');
         if (!id) {
             panel.className = 'budget-panel is-empty';
@@ -175,6 +216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     document.getElementById('sAmount').addEventListener('input', validateAmount);
     sDept.addEventListener('change', onDeptChange);
+    sHousekeepingLocation.addEventListener('change', housekeepingFields);
 
     /* ── Attachment helpers ───────────────────────────────────── */
     function formatFileSize(bytes) {
@@ -228,6 +270,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function load() {
         const q = new URLSearchParams({ per_page: 1000 });
         if (fDept.value) q.set('department_id', fDept.value);
+        if (document.getElementById('fMaintenanceCategory').value) q.set('maintenance_category', document.getElementById('fMaintenanceCategory').value);
+        if (document.getElementById('fWorkLocation').value) q.set('work_location', document.getElementById('fWorkLocation').value);
         if (document.getElementById('fStatus').value) q.set('status', document.getElementById('fStatus').value);
 
         const rows = (await App.api('/api/sanctions?' + q)).data;
@@ -248,7 +292,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <strong class="text-primary">${App.esc(r.sanction_no)}</strong>
                     ${renderAttachmentBadge(r.id, attCounts[r.id])}
                 </td>
-                <td>${App.esc(r.department_name)}</td>
+                <td>${App.esc(r.department_name)}${r.maintenance_category ? `<div class="small text-secondary">${App.esc(r.maintenance_category)} · ${App.esc(r.work_location_name || '—')}</div>` : ''}</td>
                 <td>${App.money(r.amount)}</td>
                 <td>${r.status === 'approved' ? App.money(r.balance_amount) : '—'}</td>
                 <td>${App.esc(r.purpose)}</td>
@@ -257,7 +301,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 <td class="text-end text-nowrap">
                     <a class="btn btn-sm btn-outline-secondary" href="${App.base}/sanctions/${r.id}/view" title="View"><i class="fa-solid fa-eye"></i></a>
                     <a class="btn btn-sm btn-outline-secondary" href="${App.base}/sanctions/${r.id}/print" target="_blank" title="Print"><i class="fa-solid fa-print"></i></a>
-                    ${canCreate && r.status === 'pending' ? `<button class="btn btn-sm btn-outline-secondary act-edit" data-id="${r.id}" title="Edit"><i class="fa-solid fa-pen"></i></button>` : ''}
+                    ${canCreate && ['pending','rejected'].includes(r.status) ? `<button class="btn btn-sm btn-outline-secondary act-edit" data-id="${r.id}" title="Edit and resubmit"><i class="fa-solid fa-pen"></i></button>` : ''}
                     ${canVerify && r.status === 'pending' ? `<button class="btn btn-sm btn-outline-primary act-verify" data-id="${r.id}" title="Verify"><i class="fa-solid fa-clipboard-check"></i></button>` : ''}
                     ${canApprove && ['pending','verified'].includes(r.status) ? `
                         <button class="btn btn-sm btn-outline-success act-approve" data-id="${r.id}" title="Approve"><i class="fa-solid fa-check"></i></button>
@@ -324,7 +368,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         else if (btn.classList.contains('act-verify'))  action('/verify', 'Verify sanction');
         else if (btn.classList.contains('act-approve')) action('/approve', 'Approve sanction');
-        else if (btn.classList.contains('act-reject'))  action('/reject', 'Reject sanction');
+        else if (btn.classList.contains('act-reject')) {
+            const result = await Swal.fire({ title: 'Reject ' + row.sanction_no + '?', input: 'textarea', inputLabel: 'Rejection Reason', inputPlaceholder: 'Enter a clear reason', showCancelButton: true, confirmButtonText: 'Reject', confirmButtonColor: '#ff375f', inputValidator: value => !value || !value.trim() ? 'Rejection reason is required.' : undefined });
+            if (!result.isConfirmed) return;
+            try { await App.api('/api/sanctions/' + id + '/reject', { method: 'POST', body: { reason: result.value.trim() } }); App.toast('success', 'Sanction rejected'); load(); } catch (err) { App.toast('error', err.message); }
+        }
         else if (btn.classList.contains('act-del')) {
             if (!await App.confirmAction('Delete sanction?', row.sanction_no + ' will be permanently removed.', 'Yes, delete')) return;
             try {
@@ -352,6 +400,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         fd.append('amount', document.getElementById('sAmount').value);
         fd.append('purpose', document.getElementById('sPurpose').value);
         fd.append('remarks', document.getElementById('sRemarks').value);
+        fd.append('maintenance_category', document.getElementById('sMaintenanceCategory').value);
+        fd.append('work_location', sDept.value && (depts.find(d => String(d.id) === String(sDept.value)) || {}).code === 'HKP' ? sHousekeepingLocation.value : document.getElementById('sWorkLocation').value);
+        fd.append('other_work_location', document.getElementById('sOtherWorkLocation').value);
 
         // Append attachment files
         const fileInput = document.getElementById('sAttachments');
@@ -361,7 +412,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         try {
             if (editing) {
-                await App.api('/api/sanctions/' + editing, { method: 'PUT', body: fd });
+                // PHP does not populate multipart fields for a native PUT
+                // request; use the app's existing method-spoofing contract.
+                fd.append('_method', 'PUT');
+                await App.api('/api/sanctions/' + editing, { method: 'POST', body: fd });
                 App.toast('success', 'Sanction updated');
             } else {
                 fd.append('department_id', sDept.value);
@@ -377,7 +431,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (err) { App.toast('error', err.message); }
     });
 
-    ['fDept', 'fStatus'].forEach(id => document.getElementById(id).addEventListener('change', load));
+    ['fDept', 'fStatus', 'fMaintenanceCategory', 'fWorkLocation'].forEach(id => document.getElementById(id).addEventListener('change', load));
     document.getElementById('expCsv').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/sanctions/export?format=csv'; });
     document.getElementById('expExcel').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/sanctions/export?format=excel'; });
 

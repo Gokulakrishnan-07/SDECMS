@@ -26,6 +26,8 @@
 <div class="glass-card table-card">
     <div class="row g-2 mb-3">
         <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fDept"><option value="">All Departments</option></select></div>
+        <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fMaintenanceCategory"><option value="">All Maintenance Categories</option><option>Civil</option><option>Electrical</option><option>Plumbing</option></select></div>
+        <div class="col-6 col-md-3"><select class="form-select form-select-sm" id="fWorkLocation"><option value="">All Work Locations</option></select></div>
         <div class="col-6 col-md-3">
             <select class="form-select form-select-sm" id="fStatus">
                 <option value="">All Statuses</option>
@@ -65,6 +67,10 @@
                         <label class="form-label">Department</label>
                         <select class="form-select" id="oDept" required></select>
                     </div>
+                    <div class="col-md-4" id="grpHousekeepingWorkLocation" style="display:none"><label class="form-label">Work Location / Service Area</label><select class="form-select" id="oHousekeepingWorkLocation"><option value="">— Select location —</option></select></div>
+                    <div class="col-12" id="grpHousekeepingOther" style="display:none"><label class="form-label">Other Work Location / Service Area</label><input type="text" class="form-control" id="oOtherWorkLocation" maxlength="255"></div>
+                    <div class="col-md-4" id="grpMaintenanceCategory" style="display:none"><label class="form-label">Maintenance Category</label><select class="form-select" id="oMaintenanceCategory"><option value="">— Select category —</option><option>Civil</option><option>Electrical</option><option>Plumbing</option></select></div>
+                    <div class="col-md-4" id="grpWorkLocation" style="display:none"><label class="form-label">Work Location</label><select class="form-select" id="oWorkLocation"><option value="">— Select work location —</option></select></div>
                     <div class="col-md-4" id="grpPr">
                         <label class="form-label">Linked Purchase Request <small class="text-secondary">(optional, approved only)</small></label>
                         <select class="form-select" id="oPr"><option value="">— None —</option></select>
@@ -149,10 +155,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     let table, editing = null;
 
     const depts = (await App.api('/api/departments')).data;
+    const locations = (await App.api('/api/work-locations')).data;
+    locations.forEach(l => document.getElementById('fWorkLocation').add(new Option(l.label, l.value)));
+    document.getElementById('fWorkLocation').add(new Option('Others', 'other'));
     const fDept = document.getElementById('fDept');
     depts.forEach(d => fDept.add(new Option(d.name, d.id)));
     const oDept = document.getElementById('oDept');
     depts.forEach(d => oDept.add(new Option(d.name, d.id)));
+    locations.forEach(l => document.getElementById('oWorkLocation').add(new Option(l.label, l.value)));
+    const oHousekeepingLocation = document.getElementById('oHousekeepingWorkLocation');
+    locations.forEach(l => oHousekeepingLocation.add(new Option(l.label, l.value)));
+    oHousekeepingLocation.add(new Option('Others', 'other'));
+    function maintenanceFields() {
+        const on = (depts.find(d => String(d.id) === String(oDept.value)) || {}).code === 'MNT';
+        document.getElementById('grpMaintenanceCategory').style.display = on ? '' : 'none';
+        document.getElementById('grpWorkLocation').style.display = on ? '' : 'none';
+        document.getElementById('oMaintenanceCategory').required = on;
+        document.getElementById('oWorkLocation').required = on;
+    }
+    oDept.addEventListener('change', maintenanceFields);
+    function housekeepingFields() {
+        const on = (depts.find(d => String(d.id) === String(oDept.value)) || {}).code === 'HKP';
+        document.getElementById('grpHousekeepingWorkLocation').style.display = on ? '' : 'none';
+        document.getElementById('grpHousekeepingOther').style.display = on && oHousekeepingLocation.value === 'other' ? '' : 'none';
+        oHousekeepingLocation.required = on;
+        document.getElementById('oOtherWorkLocation').required = on && oHousekeepingLocation.value === 'other';
+        if (!on) { oHousekeepingLocation.value = ''; document.getElementById('oOtherWorkLocation').value = ''; }
+    }
+    oHousekeepingLocation.addEventListener('change', housekeepingFields);
+    document.getElementById('oPr').addEventListener('change', () => {
+        const linked = !!document.getElementById('oPr').value;
+        document.getElementById('oMaintenanceCategory').required = !linked && document.getElementById('grpMaintenanceCategory').style.display !== 'none';
+        document.getElementById('oWorkLocation').required = !linked && document.getElementById('grpWorkLocation').style.display !== 'none';
+    });
 
     async function loadApprovedPRs() {
         const rows = (await App.api('/api/purchase-requests?status=approved&per_page=500')).data;
@@ -210,6 +245,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     async function load() {
         const q = new URLSearchParams({ per_page: 1000 });
         if (fDept.value) q.set('department_id', fDept.value);
+        if (document.getElementById('fMaintenanceCategory').value) q.set('maintenance_category', document.getElementById('fMaintenanceCategory').value);
+        if (document.getElementById('fWorkLocation').value) q.set('work_location', document.getElementById('fWorkLocation').value);
         if (document.getElementById('fStatus').value) q.set('status', document.getElementById('fStatus').value);
 
         const rows = (await App.api('/api/purchase-orders?' + q)).data;
@@ -218,7 +255,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             <tr>
                 <td><strong class="text-primary">${App.esc(r.po_no)}</strong></td>
                 <td>${App.esc(r.vendor_name)}</td>
-                <td>${App.esc(r.department_name)}</td>
+                <td>${App.esc(r.department_name)}${r.maintenance_category ? `<div class="small text-secondary">${App.esc(r.maintenance_category)} · ${App.esc(r.work_location_name || '—')}</div>` : ''}</td>
                 <td>${App.esc(r.pr_no || '—')}</td>
                 <td>${App.money(r.total_amount)}</td>
                 <td>${App.esc(r.invoice_no || '—')}</td>
@@ -288,6 +325,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('oInvoice').value = po.invoice_no || '';
             document.getElementById('oGst').value = po.gst_percent;
             document.getElementById('oRemarks').value = po.remarks || '';
+            document.getElementById('oDept').value = po.department_id;
+            oHousekeepingLocation.value = po.work_location_type === 'other' ? 'other' : (po.work_location_type ? po.work_location_type + ':' + po.work_location_id : '');
+            document.getElementById('oOtherWorkLocation').value = po.other_work_location || '';
+            housekeepingFields();
             itemsBody.innerHTML = '';
             po.items.forEach(addItemRow);
             modal.show();
@@ -322,6 +363,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         document.getElementById('grpPr').style.display = '';
         document.getElementById('poForm').reset();
         document.getElementById('oGst').value = 18;
+        maintenanceFields();
+        document.getElementById('oOtherWorkLocation').value = '';
+        housekeepingFields();
         itemsBody.innerHTML = '';
         addItemRow();
         loadApprovedPRs();
@@ -338,6 +382,9 @@ document.addEventListener('DOMContentLoaded', async () => {
             vendor_address: document.getElementById('oAddress').value,
             invoice_no: document.getElementById('oInvoice').value,
             gst_percent: document.getElementById('oGst').value,
+            maintenance_category: document.getElementById('oMaintenanceCategory').value,
+            work_location: document.getElementById('oWorkLocation').value,
+            other_work_location: document.getElementById('oOtherWorkLocation').value,
             remarks: document.getElementById('oRemarks').value,
             items,
         };
@@ -348,6 +395,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             } else {
                 body.department_id = oDept.value;
                 body.purchase_request_id = document.getElementById('oPr').value || null;
+                if ((depts.find(d => String(d.id) === String(oDept.value)) || {}).code === 'HKP') body.work_location = oHousekeepingLocation.value;
                 const res = await App.api('/api/purchase-orders', { method: 'POST', body });
                 App.toast('success', res.data.po_no + ' created');
             }
@@ -356,7 +404,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } catch (err) { App.toast('error', err.message); }
     });
 
-    ['fDept', 'fStatus'].forEach(id => document.getElementById(id).addEventListener('change', load));
+    ['fDept', 'fStatus', 'fMaintenanceCategory', 'fWorkLocation'].forEach(id => document.getElementById(id).addEventListener('change', load));
     document.getElementById('expCsv').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/purchase-orders/export?format=csv'; });
     document.getElementById('expExcel').addEventListener('click', e => { e.preventDefault(); location.href = App.base + '/api/purchase-orders/export?format=excel'; });
 

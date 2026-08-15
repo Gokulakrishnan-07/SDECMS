@@ -30,7 +30,7 @@ class Budget extends Model
         string $search = '',
         ?int $financialYearId = null,
         ?int $departmentId = null,
-        string $approvalStatus = ''
+        string $approvalStatus = '', string $workLocation = ''
     ): array {
         $where  = '1=1';
         $params = [];
@@ -47,10 +47,12 @@ class Budget extends Model
             $where .= ' AND b.approval_status = ?';
             $params[] = $approvalStatus;
         }
+        if (preg_match('/^(department|unit):(\d+)$/', $workLocation, $m)) { $where .= ' AND b.work_location_type = ? AND b.work_location_id = ?'; array_push($params, $m[1], (int) $m[2]); }
+        if ($workLocation === 'other') { $where .= ' AND b.work_location_type = "other"'; }
         if ($search !== '') {
-            $where .= ' AND (d.name LIKE ? OR d.code LIKE ?)';
+            $where .= ' AND (d.name LIKE ? OR d.code LIKE ? OR b.other_work_location LIKE ?)';
             $like = "%$search%";
-            array_push($params, $like, $like);
+            array_push($params, $like, $like, $like);
         }
 
         $countStmt = $this->db()->prepare(
@@ -61,6 +63,7 @@ class Budget extends Model
 
         $stmt = $this->db()->prepare(
             "SELECT b.*, d.name AS department_name, d.code AS department_code, d.icon AS department_icon,
+                    COALESCE(wd.name, wu.unit_name, CASE WHEN b.work_location_type = 'other' THEN b.other_work_location END) AS work_location_name,
                     d.workflow_type,
                     fy.label AS financial_year,
                     (b.allocated_amount - b.committed_amount - b.used_amount) AS remaining_amount,
@@ -71,13 +74,21 @@ class Budget extends Model
              FROM budgets b
              JOIN departments d      ON d.id = b.department_id
              JOIN financial_years fy ON fy.id = b.financial_year_id
+             LEFT JOIN departments wd ON b.work_location_type = 'department' AND wd.id = b.work_location_id
+             LEFT JOIN department_units wu ON b.work_location_type = 'unit' AND wu.id = b.work_location_id
              WHERE $where
              ORDER BY d.name
              LIMIT $limit OFFSET $offset"
         );
         $stmt->execute($params);
 
-        return ['items' => $stmt->fetchAll(), 'total' => $total];
+        $items = $stmt->fetchAll();
+        foreach ($items as &$item) {
+            $item['periods'] = $this->periodsFor((int) $item['id']);
+        }
+        unset($item);
+
+        return ['items' => $items, 'total' => $total];
     }
 
     /**

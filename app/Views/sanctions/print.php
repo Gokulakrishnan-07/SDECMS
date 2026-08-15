@@ -33,6 +33,7 @@
     <table>
         <tr><th>Sanction Number</th><td><?= e($sanction['sanction_no']) ?></td></tr>
         <tr><th>Department</th><td><?= e($sanction['department_name']) ?> (<?= e($sanction['department_code']) ?>)</td></tr>
+        <?php if (!empty($sanction['work_location_type'])): ?><?php if (!empty($sanction['maintenance_category'])): ?><tr><th>Maintenance Category</th><td><?= e($sanction['maintenance_category']) ?></td></tr><?php endif; ?><tr><th>Work Location / Service Area</th><td><?= e($sanction['work_location_name'] ?? 'No records available.') ?></td></tr><?php endif; ?>
         <tr><th>Financial Year</th><td><?= e($sanction['financial_year']) ?></td></tr>
         <tr><th>Sanctioned Amount</th><td class="amount"><?= e(money((float) $sanction['amount'])) ?></td></tr>
         <tr><th>Purpose</th><td><?= e($sanction['purpose']) ?></td></tr>

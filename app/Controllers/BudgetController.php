@@ -14,6 +14,7 @@ use App\Models\Department;
 use App\Models\FinancialYear;
 use App\Services\AuditService;
 use App\Services\NotificationService;
+use App\Services\MaintenanceHierarchy;
 
 class BudgetController extends Controller
 {
@@ -41,7 +42,7 @@ class BudgetController extends Controller
 
         $result = (new Budget())->paginate(
             $p['offset'], $p['perPage'], $p['search'],
-            $fy, $dept, (string) Request::query('approval_status', '')
+            $fy, $dept, (string) Request::query('approval_status', ''), (string) Request::query('work_location', '')
         );
 
         Response::paginated($result['items'], $result['total'], $p['page'], $p['perPage']);
@@ -57,11 +58,29 @@ class BudgetController extends Controller
             'financial_year_id' => 'required|integer',
             'allocated_amount'  => 'required|numeric|min:0',
             'remarks'           => 'max:500',
+            'work_location'     => 'max:30',
+            'other_work_location' => 'max:255',
         ]);
         if ($v->fails()) {
             Response::error('Validation failed.', 422, $v->errors());
         }
         $data = $v->validated();
+
+        $periodInput = Request::input('periods');
+        $quarterly = is_array($periodInput) && $periodInput !== []
+            ? $this->quarterlyAllocation((int) $data['financial_year_id'], $periodInput)
+            : ['periods' => [], 'total' => round((float) $data['allocated_amount'], 2)];
+        if ($quarterly === null) {
+            Response::error('Quarter values cannot be negative.', 422, ['periods' => 'Quarter values cannot be negative.']);
+        }
+        $data['allocated_amount'] = $quarterly['total'];
+
+        $location = MaintenanceHierarchy::isHousekeeping((int) $data['department_id'])
+            ? MaintenanceHierarchy::resolveForDepartment((int) $data['department_id'], $data['work_location'] ?? null, $data['other_work_location'] ?? null)
+            : null;
+        if (MaintenanceHierarchy::isHousekeeping((int) $data['department_id']) && $location === null) {
+            Response::error('Housekeeping Work Location / Service Area is required.', 422, ['work_location' => 'Select a location or Others with a description.']);
+        }
 
         $budget = new Budget();
         if ($budget->findByDeptFy((int) $data['department_id'], (int) $data['financial_year_id'])) {
@@ -70,16 +89,16 @@ class BudgetController extends Controller
 
         $id = $budget->insert([
             'department_id'     => (int) $data['department_id'],
+            'work_location_type' => $location['type'] ?? null,
+            'work_location_id' => $location['id'] ?? null,
+            'other_work_location' => $location['other'] ?? null,
             'financial_year_id' => (int) $data['financial_year_id'],
             'allocated_amount'  => (float) $data['allocated_amount'],
             'remarks'           => $data['remarks'] ?? null,
             'created_by'        => Auth::id(),
         ]);
 
-        $periods = Request::input('periods');
-        if (is_array($periods)) {
-            $budget->replacePeriods($id, $periods);
-        }
+        $budget->replacePeriods($id, $quarterly['periods']);
 
         $dept = (new Department())->find((int) $data['department_id']);
         AuditService::log('create', 'budgets', $id, 'Budget allocated for ' . ($dept['name'] ?? '?'));
@@ -109,11 +128,28 @@ class BudgetController extends Controller
             'allocated_amount' => 'required|numeric|min:0',
             'status'           => 'in:active,inactive',
             'remarks'          => 'max:500',
+            'work_location'    => 'max:30',
+            'other_work_location' => 'max:255',
         ]);
         if ($v->fails()) {
             Response::error('Validation failed.', 422, $v->errors());
         }
         $data = $v->validated();
+
+        $quarterly = null;
+        if (array_key_exists('periods', Request::all())) {
+            $quarterly = $this->quarterlyAllocation((int) $row['financial_year_id'], Request::input('periods'));
+            if ($quarterly === null) {
+                Response::error('Quarter values cannot be negative.', 422, ['periods' => 'Quarter values cannot be negative.']);
+            }
+            $data['allocated_amount'] = $quarterly['total'];
+        }
+
+        $location = null;
+        if (MaintenanceHierarchy::isHousekeeping((int) $row['department_id']) && (array_key_exists('work_location', Request::all()) || array_key_exists('other_work_location', Request::all()))) {
+            $location = MaintenanceHierarchy::resolveForDepartment((int) $row['department_id'], $data['work_location'] ?? null, $data['other_work_location'] ?? null);
+            if ($location === null) Response::error('Housekeeping Work Location / Service Area is required.', 422, ['work_location' => 'Select a location or Others with a description.']);
+        }
 
         $spoken = (float) $row['committed_amount'] + (float) $row['used_amount'];
         if ((float) $data['allocated_amount'] < $spoken) {
@@ -124,11 +160,11 @@ class BudgetController extends Controller
             'allocated_amount' => (float) $data['allocated_amount'],
             'status'           => $data['status'] ?? $row['status'],
             'remarks'          => $data['remarks'] ?? $row['remarks'],
+            ...($location !== null ? ['work_location_type' => $location['type'], 'work_location_id' => $location['id'], 'other_work_location' => $location['other']] : []),
         ]);
 
-        $periods = Request::input('periods');
-        if (is_array($periods)) {
-            $budget->replacePeriods((int) $id, $periods);
+        if ($quarterly !== null) {
+            $budget->replacePeriods((int) $id, $quarterly['periods']);
         }
 
         AuditService::log('update', 'budgets', (int) $id, 'Budget updated');
@@ -210,9 +246,9 @@ class BudgetController extends Controller
         $dept = Auth::role() === 'department_head' ? Auth::departmentId() : null;
         $rows = (new Budget())->paginate(0, 10000, '', (int) $fy['id'], $dept)['items'];
 
-        $headers = ['Department', 'Financial Year', 'Allocated', 'Used', 'Remaining', 'Utilization %', 'Status', 'Approval'];
+        $headers = ['Department', 'Work Location / Service Area', 'Financial Year', 'Allocated', 'Used', 'Remaining', 'Utilization %', 'Status', 'Approval'];
         $data    = array_map(static fn ($r) => [
-            $r['department_name'], $r['financial_year'],
+            $r['department_name'], $r['work_location_name'] ?? '', $r['financial_year'],
             $r['allocated_amount'], $r['used_amount'], $r['remaining_amount'],
             $r['utilization'], $r['status'], $r['approval_status'],
         ], $rows);
@@ -222,5 +258,22 @@ class BudgetController extends Controller
             Response::excel($filename . '.xls', $headers, $data, 'Budget Allocation — FY ' . $fy['label']);
         }
         Response::csv($filename . '.csv', $headers, $data);
+    }
+
+    private function quarterlyAllocation(int $financialYearId, mixed $input): ?array
+    {
+        if (!is_array($input)) return null;
+        $valid = [];
+        foreach ((new FinancialYear())->periods($financialYearId) as $period) $valid[(string) $period['id']] = true;
+        $periods = [];
+        $total = 0.0;
+        foreach ($input as $period) {
+            $id = (string) ($period['period_id'] ?? '');
+            $amount = (float) ($period['allocated_amount'] ?? 0);
+            if ($id === '' || !isset($valid[$id]) || $amount < 0) return null;
+            $periods[] = ['period_id' => (int) $id, 'allocated_amount' => $amount];
+            $total += $amount;
+        }
+        return ['periods' => $periods, 'total' => round($total, 2)];
     }
 }

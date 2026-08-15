@@ -16,7 +16,7 @@ class Sanction extends Model
         string $search = '',
         ?int $financialYearId = null,
         ?int $departmentId = null,
-        string $status = ''
+        string $status = '', string $maintenanceCategory = '', string $workLocation = ''
     ): array {
         $where  = '1=1';
         $params = [];
@@ -33,10 +33,13 @@ class Sanction extends Model
             $where .= ' AND s.status = ?';
             $params[] = $status;
         }
+        if ($maintenanceCategory !== '') { $where .= ' AND s.maintenance_category = ?'; $params[] = $maintenanceCategory; }
+        if (preg_match('/^(department|unit):(\d+)$/', $workLocation, $m)) { $where .= ' AND s.work_location_type = ? AND s.work_location_id = ?'; array_push($params, $m[1], (int) $m[2]); }
+        if ($workLocation === 'other') { $where .= ' AND s.work_location_type = "other"'; }
         if ($search !== '') {
-            $where .= ' AND (s.sanction_no LIKE ? OR s.purpose LIKE ? OR d.name LIKE ?)';
+            $where .= ' AND (s.sanction_no LIKE ? OR s.purpose LIKE ? OR d.name LIKE ? OR s.maintenance_category LIKE ? OR s.other_work_location LIKE ?)';
             $like = "%$search%";
-            array_push($params, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like);
         }
 
         $countStmt = $this->db()->prepare(
@@ -47,15 +50,18 @@ class Sanction extends Model
 
         $stmt = $this->db()->prepare(
             "SELECT s.*, d.name AS department_name, d.code AS department_code, d.workflow_type,
-                    fy.label AS financial_year,
+                    fy.label AS financial_year, COALESCE(wd.name, wu.unit_name, CASE WHEN s.work_location_type = 'other' THEN s.other_work_location END) AS work_location_name,
                     (s.amount - s.requisitioned_amount) AS balance_amount,
-                    cu.name AS created_by_name, au.name AS approved_by_name, vu.name AS verified_by_name
+                    cu.name AS created_by_name, au.name AS approved_by_name, vu.name AS verified_by_name, ru.name AS rejected_by_name
              FROM sanctions s
              JOIN departments d      ON d.id = s.department_id
              JOIN financial_years fy ON fy.id = s.financial_year_id
              LEFT JOIN users cu ON cu.id = s.created_by
              LEFT JOIN users au ON au.id = s.approved_by
              LEFT JOIN users vu ON vu.id = s.verified_by
+             LEFT JOIN users ru ON ru.id = s.rejected_by
+             LEFT JOIN departments wd ON s.work_location_type = 'department' AND wd.id = s.work_location_id
+             LEFT JOIN department_units wu ON s.work_location_type = 'unit' AND wu.id = s.work_location_id
              WHERE $where
              ORDER BY s.created_at DESC
              LIMIT $limit OFFSET $offset"
@@ -86,19 +92,23 @@ class Sanction extends Model
     {
         $stmt = $this->db()->prepare(
             'SELECT s.*, d.name AS department_name, d.code AS department_code,
-                    fy.label AS financial_year,
+                    fy.label AS financial_year, COALESCE(wd.name, wu.unit_name, CASE WHEN s.work_location_type = "other" THEN s.other_work_location END) AS work_location_name,
                     (s.amount - s.requisitioned_amount) AS balance_amount,
-                    cu.name AS created_by_name, au.name AS approved_by_name, vu.name AS verified_by_name
+                    cu.name AS created_by_name, au.name AS approved_by_name, vu.name AS verified_by_name, ru.name AS rejected_by_name
              FROM sanctions s
              JOIN departments d      ON d.id = s.department_id
              JOIN financial_years fy ON fy.id = s.financial_year_id
             LEFT JOIN users cu ON cu.id = s.created_by
             LEFT JOIN users au ON au.id = s.approved_by
             LEFT JOIN users vu ON vu.id = s.verified_by
+            LEFT JOIN users ru ON ru.id = s.rejected_by
+            LEFT JOIN departments wd ON s.work_location_type = "department" AND wd.id = s.work_location_id
+            LEFT JOIN department_units wu ON s.work_location_type = "unit" AND wu.id = s.work_location_id
              WHERE s.id = ? LIMIT 1'
         );
         $stmt->execute([$id]);
         $row = $stmt->fetch();
+        if ($row !== false) $row['approval_history'] = \App\Services\ApprovalHistoryService::for('sanction', $id);
         return $row === false ? null : $row;
     }
 

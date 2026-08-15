@@ -27,8 +27,8 @@ class ReportController extends Controller
      */
     public function data(): void
     {
-        [$type, $fy, $dept] = $this->params();
-        $report = (new ReportService())->build($type, (int) $fy['id'], $dept);
+        [$type, $fy, $dept, $category, $location] = $this->params();
+        $report = (new ReportService())->build($type, (int) $fy['id'], $dept, $category, $location);
         $report['financial_year'] = $fy['label'];
         Response::json($report);
     }
@@ -38,8 +38,8 @@ class ReportController extends Controller
      */
     public function export(): void
     {
-        [$type, $fy, $dept] = $this->params();
-        $report = (new ReportService())->build($type, (int) $fy['id'], $dept);
+        [$type, $fy, $dept, $category, $location] = $this->params();
+        $report = (new ReportService())->build($type, (int) $fy['id'], $dept, $category, $location);
 
         $rows = $report['rows'];
         if ($rows === []) {
@@ -76,6 +76,6 @@ class ReportController extends Controller
         }
 
         $dept = Request::query('department_id') ? (int) Request::query('department_id') : null;
-        return [$type, $fy, $dept];
+        return [$type, $fy, $dept, (string) Request::query('maintenance_category', ''), (string) Request::query('work_location', '')];
     }
 }

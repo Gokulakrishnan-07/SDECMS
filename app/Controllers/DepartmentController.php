@@ -12,6 +12,7 @@ use App\Models\Budget;
 use App\Models\Department;
 use App\Models\DepartmentUnit;
 use App\Models\FinancialYear;
+use App\Services\MaintenanceHierarchy;
 
 class DepartmentController extends Controller
 {
@@ -39,6 +40,12 @@ class DepartmentController extends Controller
     public function units(string $id): void
     {
         Response::json((new DepartmentUnit())->forDepartment((int) $id));
+    }
+
+    /** GET /api/work-locations - departments and units available as locations. */
+    public function workLocations(): void
+    {
+        Response::json(MaintenanceHierarchy::locations());
     }
 
     /**
