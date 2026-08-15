@@ -456,18 +456,9 @@ body.sidebar-collapsed .sidebar-user-meta { opacity: 0; width: 0; }
 .orbit-progress { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; margin-top: 0.5rem; }
 .orbit-progress span { display: block; height: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent), var(--purple)); transition: width 0.6s var(--ease); }
 
-/* Orbit fallback grid on small screens */
+/* Hide the desktop-only orbit showcase on small screens. */
 @media (max-width: 767.98px) {
-    .orbit-stage { height: auto; padding: 1.25rem; }
-    .orbit-center { position: static; transform: none; margin-bottom: 1rem; }
-    .orbit-card {
-        position: static;
-        margin: 0 0 0.8rem;
-        width: 100%;
-        opacity: 1 !important;
-        transform: none !important;
-    }
-    .orbit-card .oc-details { display: block; }
+    .orbit-section { display: none; }
 }
 
 /* ----------------------------------------------------------- Charts grid */

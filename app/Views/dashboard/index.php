@@ -155,7 +155,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     // ---- Department orbit showcase
-    App.initOrbit(document.getElementById('orbitStage'), payload.departments || []);
+    if (!window.matchMedia('(max-width: 767.98px)').matches) {
+        App.initOrbit(document.getElementById('orbitStage'), payload.departments || []);
+    }
 
     // ---- Charts
     const opts = App.baseChartOptions;
